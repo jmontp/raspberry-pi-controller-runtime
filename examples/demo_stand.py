@@ -13,7 +13,10 @@ from rpc_runtime.controllers.pi_controller import (
 from rpc_runtime.controllers.torque_models.onnx_runtime import ONNXTorqueModel
 from rpc_runtime.pipelines.runtime_loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.sensors.grf.fsr import BluetoothFSR, BluetoothFSRConfig
-from rpc_runtime.sensors.imu.physical import LegacyIMUAdapter, LegacyIMUConfig
+from rpc_runtime.sensors.imu.microstrain_3dm_gx5 import (
+    Microstrain3DMGX5Config,
+    Microstrain3DMGX5IMU,
+)
 
 
 def main() -> None:
@@ -29,8 +32,11 @@ def main() -> None:
         ki={"knee": 5, "ankle": 3},
     )
     torque_model = ONNXTorqueModel(bundle)
-    imu = LegacyIMUAdapter(
-        LegacyIMUConfig(joints=("knee", "ankle"), segments=("thigh", "shank", "foot"))
+    imu = Microstrain3DMGX5IMU(
+        Microstrain3DMGX5Config(
+            joint_names=("knee", "ankle"),
+            segment_names=("thigh", "shank", "foot"),
+        )
     )
     fsr = BluetoothFSR(BluetoothFSRConfig(address="E8:EA:71:E8:37:D1"))
     actuator = OSLActuator(
