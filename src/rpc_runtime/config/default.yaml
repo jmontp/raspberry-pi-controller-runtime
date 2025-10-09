@@ -1,0 +1,28 @@
+controller:
+  frequency_hz: 500
+  torque_scale: 0.1
+  torque_limit_nm: 25
+  joints: ["knee", "ankle"]
+  gains:
+    kp:
+      knee: 120
+      ankle: 80
+    ki:
+      knee: 5
+      ankle: 3
+imu:
+  type: "legacy"
+  joints: ["knee", "ankle"]
+  segments: ["thigh", "shank", "foot"]
+vertical_grf:
+  type: "bluetooth_fsr"
+  address: "E8:EA:71:E8:37:D1"
+actuator:
+  joints:
+    - name: "knee"
+      gear_ratio: 9.0
+      port: "/dev/ttyActPackRightKnee"
+    - name: "ankle"
+      gear_ratio: 9.0
+      port: "/dev/ttyActPackRightAnkle"
+  controller_hz: 500

@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raspberry-pi-controller-runtime"
+version = "0.1.0"
+description = "Modular Raspberry Pi control runtime for exoskeleton actuators"
+readme = "README.md"
+authors = [{name = "OpenSourceLeg Team"}]
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.11",
+  "pandas>=1.5",
+  "onnxruntime>=1.17",
+  "torch>=2.3",
+  "bleak>=0.21",
+  "osl @ git+https://github.com/opensourceleg/osl",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pytest-asyncio>=0.23",
+  "mypy>=1.8",
+  "ruff>=0.3.0",
+  "types-PyYAML",
+]
+
+[tool.setuptools]
+packages = ["rpc_runtime"]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "C4", "I", "N"]
+ignore = ["E203", "E266"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+strict = false
+plugins = []
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+filterwarnings = ["error"]
+markers = [
+  "hardware: marks tests that require physical hardware",
+]
+
