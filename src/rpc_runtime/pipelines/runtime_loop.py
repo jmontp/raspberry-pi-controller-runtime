@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Callable, Iterable
 
 from ..actuators.base import BaseActuator
 from ..controllers.pi_controller import PIController
 from ..sensors.combinators import ControlInputs
 from ..sensors.grf.base import BaseVerticalGRF
 from ..sensors.imu.base import BaseIMU
+from .scheduler import BaseScheduler, SimpleScheduler
 
 
 @dataclass(slots=True)
@@ -27,13 +28,16 @@ class RuntimeLoop:
         actuator: BaseActuator,
         controller: PIController,
         vertical_grf: BaseVerticalGRF | None = None,
+        scheduler_factory: Callable[[float | None], BaseScheduler] | None = None,
     ) -> None:
         self._config = config
         self._imu = imu
         self._actuator = actuator
         self._controller = controller
         self._vertical_grf = vertical_grf
-        self._dt = 1.0 / config.frequency_hz
+        self._scheduler_factory = scheduler_factory or (
+            lambda duration: SimpleScheduler(config.frequency_hz, duration)
+        )
 
     def __enter__(self) -> "RuntimeLoop":
         self._imu.__enter__()
@@ -51,18 +55,17 @@ class RuntimeLoop:
 
     def run(self, duration_s: float | None = None) -> Iterable[ControlInputs]:
         start = time.monotonic()
-        while True:
-            tick_start = time.monotonic()
-            imu_sample = self._imu.read()
-            grf_sample = self._vertical_grf.read() if self._vertical_grf is not None else None
-            control_inputs = ControlInputs(imu=imu_sample, vertical_grf=grf_sample)
-            command = self._controller.tick(control_inputs)
-            self._actuator.apply(command)
-            self._actuator.fault_if_needed()
-            yield control_inputs
-            elapsed = time.monotonic() - start
-            if duration_s is not None and elapsed >= duration_s:
-                break
-            sleep_time = self._dt - (time.monotonic() - tick_start)
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+        scheduler = self._scheduler_factory(duration_s)
+        with scheduler:
+            for _ in scheduler.ticks():
+                imu_sample = self._imu.read()
+                grf_sample = (
+                    self._vertical_grf.read() if self._vertical_grf is not None else None
+                )
+                control_inputs = ControlInputs(imu=imu_sample, vertical_grf=grf_sample)
+                command = self._controller.tick(control_inputs)
+                self._actuator.apply(command)
+                self._actuator.fault_if_needed()
+                yield control_inputs
+                if duration_s is not None and (time.monotonic() - start) >= duration_s:
+                    break
