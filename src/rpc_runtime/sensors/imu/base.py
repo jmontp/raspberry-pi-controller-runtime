@@ -41,12 +41,13 @@ DEFAULT_SEGMENT_ANGLE_CONVENTIONS: Dict[str, str] = {
     "foot_l": "Positive rotation is counter-clockwise from the left side (toe-up).",
 }
 DEFAULT_PORT_MAP: Dict[str, str] = {
-    "hip_r": "/dev/ttyIMU0",
-    "knee_r": "/dev/ttyIMU0",
-    "ankle_r": "/dev/ttyIMU0",
-    "hip_l": "/dev/ttyIMU1",
-    "knee_l": "/dev/ttyIMU1",
-    "ankle_l": "/dev/ttyIMU1",
+    "trunk": "/dev/ttyIMU_trunk",
+    "thigh_r": "/dev/ttyIMU_thigh_r",
+    "shank_r": "/dev/ttyIMU_shank_r",
+    "foot_r": "/dev/ttyIMU_foot_r",
+    "thigh_l": "/dev/ttyIMU_thigh_l",
+    "shank_l": "/dev/ttyIMU_shank_l",
+    "foot_l": "/dev/ttyIMU_foot_l",
 }
 
 
@@ -88,8 +89,13 @@ class BaseIMUConfig:
     """Base configuration shared across IMU implementations."""
 
     joint_names: Tuple[str, ...] = DEFAULT_JOINT_NAMES
+    """Ordered joint names (subset of ``BaseIMU.JOINT_NAMES``) used for outputs."""
+
     segment_names: Tuple[str, ...] = DEFAULT_SEGMENT_NAMES
+    """Ordered segment names (subset of ``BaseIMU.SEGMENT_NAMES``) expected from hardware."""
+
     port_map: Dict[str, str] = field(default_factory=lambda: dict(DEFAULT_PORT_MAP))
+    """Mapping of segment name to underlying transport identifier/port."""
 
 
 class BaseIMU(abc.ABC):
@@ -111,7 +117,8 @@ class BaseIMU(abc.ABC):
     SEGMENT_ANGLE_CONVENTIONS: dict[str, str] = DEFAULT_SEGMENT_ANGLE_CONVENTIONS.copy()
 
     def __init__(self, config: BaseIMUConfig | None = None) -> None:
-        self._config = self._validate_config(config or BaseIMUConfig())
+        cfg = config or BaseIMUConfig()
+        self._config = self._validate_config(cfg)
 
     def __enter__(self) -> "BaseIMU":
         """Enter context manager and start streaming if required."""
@@ -159,7 +166,7 @@ class BaseIMU(abc.ABC):
 
     @property
     def port_map(self) -> dict[str, str]:
-        """Mapping of joint name to underlying transport identifier/port."""
+        """Mapping of segment name to underlying transport identifier/port."""
         return self._config.port_map
 
     @property
@@ -182,9 +189,6 @@ class BaseIMU(abc.ABC):
 
         Args:
             config: Candidate configuration to validate and copy.
-
-        Returns:
-            BaseIMUConfig: Normalised configuration with canonical tuples and ports.
 
         Raises:
             ValueError: If the config omits joints, segments, or required port
@@ -221,7 +225,38 @@ class BaseIMU(abc.ABC):
             raise ValueError(f"Missing port mappings for segments: {missing}")
         normalized_port_map = {name: str(port_map[name]) for name in segment_names}
 
+        cls._validate_joint_dependencies(joint_names, segment_names)
+
         config.joint_names = joint_names
         config.segment_names = segment_names
         config.port_map = normalized_port_map
         return config
+
+    @staticmethod
+    def _validate_joint_dependencies(joints: Tuple[str, ...], segments: Tuple[str, ...]) -> None:
+        """Ensure joints only reference available segments."""
+
+        required: Dict[str, Tuple[str, ...]] = {
+            "knee_r": ("thigh_r", "shank_r"),
+            "knee_l": ("thigh_l", "shank_l"),
+            "ankle_r": ("shank_r", "foot_r"),
+            "ankle_l": ("shank_l", "foot_l"),
+            "hip_r": ("trunk", "thigh_r"),
+            "hip_l": ("trunk", "thigh_l"),
+        }
+        missing_dependencies: Dict[str, Tuple[str, ...]] = {}
+        for joint in joints:
+            deps = required.get(joint)
+            if not deps:
+                continue
+            missing = tuple(dep for dep in deps if dep not in segments)
+            if missing:
+                missing_dependencies[joint] = missing
+        if missing_dependencies:
+            details = [
+                f"{joint}: missing {deps}"
+                for joint, deps in missing_dependencies.items()
+            ]
+            raise ValueError(
+                "Joint dependencies missing segments -> " + "; ".join(details)
+            )

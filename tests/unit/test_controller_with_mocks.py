@@ -23,6 +23,8 @@ def test_controller_with_mock_devices() -> None:
         segment_velocities_rad_s=(0.0, 0.0, 0.0),
     )
     mock_imu = MockIMU(samples=[imu_sample], loop=True)
+    assert mock_imu.port_map, "Mock IMU should expose a default port map"
+    assert set(mock_imu.segment_names).issubset(mock_imu.port_map.keys())
     mock_grf = MockVerticalGRF()
     mock_actuator = MockActuator()
     torque_model = MockTorqueModel(outputs={"knee": 0.5, "ankle": -0.5})
