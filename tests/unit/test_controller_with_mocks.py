@@ -1,7 +1,11 @@
 import pytest
 
 from rpc_runtime.actuators.mock import MockActuator
-from rpc_runtime.controllers.pi_controller import PIController, PIControllerConfig, PIControllerGains
+from rpc_runtime.controllers.pi_controller import (
+    PIController,
+    PIControllerConfig,
+    PIControllerGains,
+)
 from rpc_runtime.controllers.torque_models.mock import MockTorqueModel
 from rpc_runtime.pipelines.runtime_loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.sensors.grf.mock import MockVerticalGRF
@@ -9,7 +13,8 @@ from rpc_runtime.sensors.imu.base import IMUSample
 from rpc_runtime.sensors.imu.mock import MockIMU
 
 
-def test_controller_with_mock_devices():
+def test_controller_with_mock_devices() -> None:
+    """Integration-style check covering controller + scheduling with mocks."""
     imu_sample = IMUSample(
         timestamp=0.0,
         joint_angles_rad=(0.1, -0.05),
@@ -28,7 +33,10 @@ def test_controller_with_mock_devices():
         torque_limit_nm=10.0,
         joints=("knee", "ankle"),
     )
-    gains = PIControllerGains(kp={"knee": 0.0, "ankle": 0.0}, ki={"knee": 0.0, "ankle": 0.0})
+    gains = PIControllerGains(
+        kp={"knee": 0.0, "ankle": 0.0},
+        ki={"knee": 0.0, "ankle": 0.0},
+    )
     controller = PIController(config=config, gains=gains, torque_model=torque_model)
     loop = RuntimeLoop(
         RuntimeLoopConfig(frequency_hz=100.0),

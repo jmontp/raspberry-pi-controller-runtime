@@ -9,7 +9,15 @@ from typing import Protocol
 
 @dataclass(slots=True)
 class IMUSample:
-    """Single IMU reading expressed in controller joint/segment coordinates."""
+    """Single IMU reading expressed in controller joint/segment coordinates.
+
+    Args:
+        timestamp: Monotonic time when the sample was captured.
+        joint_angles_rad: Joint angles in radians ordered per controller config.
+        joint_velocities_rad_s: Joint angular velocities in radians per second.
+        segment_angles_rad: Segment angles (e.g., limb segments) in radians.
+        segment_velocities_rad_s: Segment angular velocities in radians per second.
+    """
 
     timestamp: float
     joint_angles_rad: tuple[float, ...]
@@ -19,6 +27,7 @@ class IMUSample:
 
     @property
     def joint_count(self) -> int:
+        """Number of joints reported in the sample."""
         return len(self.joint_angles_rad)
 
 
@@ -37,10 +46,12 @@ class BaseIMU(abc.ABC):
     supports_batch: bool = False
 
     def __enter__(self) -> "BaseIMU":
+        """Enter context manager and start streaming if required."""
         self.start()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        """Leave context manager and stop streaming."""
         self.stop()
 
     @abc.abstractmethod
@@ -57,6 +68,8 @@ class BaseIMU(abc.ABC):
 
     def reset(self) -> None:
         """Optional method to zero orientation and velocity estimates."""
+        return None
 
     def as_resettable(self) -> IMUResettable | None:
+        """Expose optional reset behaviour when supported."""
         return self if isinstance(self, IMUResettable) else None

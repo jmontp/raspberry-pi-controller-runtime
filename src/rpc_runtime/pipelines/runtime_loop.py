@@ -16,11 +16,15 @@ from .scheduler import BaseScheduler, SimpleScheduler
 
 @dataclass(slots=True)
 class RuntimeLoopConfig:
+    """Configuration parameters for `RuntimeLoop`."""
+
     frequency_hz: float
     profile_name: str = "default"
 
 
 class RuntimeLoop:
+    """Orchestrate sensor polling, controller execution, and actuation."""
+
     def __init__(
         self,
         config: RuntimeLoopConfig,
@@ -30,6 +34,7 @@ class RuntimeLoop:
         vertical_grf: BaseVerticalGRF | None = None,
         scheduler_factory: Callable[[float | None], BaseScheduler] | None = None,
     ) -> None:
+        """Initialise the runtime loop with hardware interfaces and scheduling."""
         self._config = config
         self._imu = imu
         self._actuator = actuator
@@ -40,6 +45,7 @@ class RuntimeLoop:
         )
 
     def __enter__(self) -> "RuntimeLoop":
+        """Enter the loop context by initialising sensors and actuators."""
         self._imu.__enter__()
         if self._vertical_grf is not None:
             self._vertical_grf.__enter__()
@@ -48,12 +54,14 @@ class RuntimeLoop:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        """Tear down resources when leaving the context."""
         self._actuator.__exit__(exc_type, exc, tb)
         if self._vertical_grf is not None:
             self._vertical_grf.__exit__(exc_type, exc, tb)
         self._imu.__exit__(exc_type, exc, tb)
 
     def run(self, duration_s: float | None = None) -> Iterable[ControlInputs]:
+        """Drive the read→compute→actuate loop."""
         start = time.monotonic()
         scheduler = self._scheduler_factory(duration_s)
         with scheduler:

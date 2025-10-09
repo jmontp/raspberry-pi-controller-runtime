@@ -13,10 +13,13 @@ class Zeroable(Protocol):
 
 @dataclass(slots=True)
 class CalibrationRoutine:
+    """Container for calibration targets executed before runtime start."""
+
     imu: Zeroable | None = None
     grf: Zeroable | None = None
 
     def run(self) -> None:
+        """Zero any provided sensor interfaces."""
         if self.imu is not None:
             self.imu.zero()
         if self.grf is not None:

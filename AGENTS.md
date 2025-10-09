@@ -7,6 +7,27 @@
 - Sensor/actuator interfaces must expose async-safe methods when they perform I/O.
 - Document assumptions and units directly in docstrings; controllers should state expected signal ordering.
 
+## Docstring standards
+- Every public module, class, and function must have a docstring.
+- Function docstrings use Google-style sections:
+  ```
+  def example(arg_one: float, arg_two: int) -> float:
+      """Short summary line.
+
+      Args:
+          arg_one: Description with units where applicable.
+          arg_two: Description including valid ranges.
+
+      Returns:
+          float: Meaning of the returned value and units.
+
+      Raises:
+          ValueError: Circumstances that trigger the error.
+      """
+  ```
+- Summaries stay to one sentence and include hardware context (frames, units, side effects).
+- For context managers or async APIs, document resource ownership and cleanup expectations.
+
 ## Linting & formatting
 - Managed with `ruff` (format + lint). Run `ruff check --fix` and `ruff format` before opening a PR.
 - Use `mypy` for static type checking; opt-in gradual types when wrapping third-party libs.

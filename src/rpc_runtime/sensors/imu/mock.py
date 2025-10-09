@@ -11,6 +11,8 @@ from .base import BaseIMU, IMUSample
 
 @dataclass(slots=True)
 class MockIMU(BaseIMU):
+    """Finite sample IMU for deterministic testing."""
+
     samples: Iterable[IMUSample]
     loop: bool = False
     _queue: Deque[IMUSample] = field(init=False, repr=False)
@@ -21,12 +23,15 @@ class MockIMU(BaseIMU):
             raise ValueError("MockIMU requires at least one sample")
 
     def start(self) -> None:
+        """No-op start hook for compatibility with context manager usage."""
         return None
 
     def stop(self) -> None:
+        """No-op stop hook for compatibility with context manager usage."""
         return None
 
     def read(self) -> IMUSample:
+        """Return the next mock sample, optionally cycling when `loop` is set."""
         if not self._queue:
             raise RuntimeError("MockIMU sample queue exhausted")
         sample = self._queue.popleft()

@@ -9,6 +9,8 @@ from typing import Iterable
 
 @dataclass(slots=True)
 class TorqueModelInput:
+    """Metadata describing torque model inputs."""
+
     feature_names: tuple[str, ...]
 
 
@@ -19,6 +21,7 @@ class TorqueModel(abc.ABC):
 
     def warmup(self) -> None:
         """Optional warmup before entering the real-time loop."""
+        return None
 
     @abc.abstractmethod
     def expected_features(self) -> Iterable[str]:

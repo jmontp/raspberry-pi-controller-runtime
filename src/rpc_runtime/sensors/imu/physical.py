@@ -8,13 +8,15 @@ from typing import Any, Callable
 from .base import BaseIMU, IMUSample
 
 try:
-    from read_imu import IMU as LegacyIMU  # type: ignore
+    import read_imu  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency on Pi
-    LegacyIMU = None
+    read_imu = None
 
 
 @dataclass(slots=True)
 class LegacyIMUConfig:
+    """Configuration describing how to adapt the legacy IMU driver."""
+
     joints: tuple[str, ...]
     segments: tuple[str, ...]
     timeout_ms: int = 500
@@ -25,20 +27,31 @@ class LegacyIMUAdapter(BaseIMU):
     """Wrap the historic `read_imu.IMU` class with the new interface."""
 
     def __init__(self, config: LegacyIMUConfig):
-        if LegacyIMU is None:
+        """Create the adapter and instantiate the underlying driver.
+
+        Args:
+            config: Joint/segment names and optional transform for raw data.
+
+        Raises:
+            RuntimeError: When the legacy driver cannot be imported.
+        """
+        if read_imu is None:
             raise RuntimeError(
                 "read_imu.IMU import failed; install hardware dependencies before using"
             )
         self._config = config
-        self._driver = LegacyIMU(timeout=config.timeout_ms)
+        self._driver = read_imu.IMU(timeout=config.timeout_ms)
 
     def start(self) -> None:
+        """Open the hardware connection and begin streaming."""
         self._driver.connect()
 
     def stop(self) -> None:
+        """Close the hardware connection."""
         self._driver.disconnect()
 
     def read(self) -> IMUSample:
+        """Fetch the latest IMU sample."""
         raw = self._driver.read()
         if self._config.transform is not None:
             return self._config.transform(raw)
@@ -57,4 +70,5 @@ class LegacyIMUAdapter(BaseIMU):
         )
 
     def reset(self) -> None:
+        """Zero the underlying driver orientation/velocity offsets."""
         self._driver.zero()

@@ -18,4 +18,4 @@ pip install -e .[dev]
 Then explore `examples/demo_stand.py` for a simple runtime loop wiring IMU + FSR data into the controller.
 
 ## Repository layout
-See `docs/architecture.md` for a module-level overview and `Agents.md` for contributor expectations.
+See `docs/architecture.md` for a module-level overview and `AGENTS.md` for contributor expectations.

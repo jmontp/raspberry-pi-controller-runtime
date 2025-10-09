@@ -20,18 +20,23 @@ def _default_waveform() -> Iterable[VerticalGRFSample]:
 
 @dataclass(slots=True)
 class MockVerticalGRF(BaseVerticalGRF):
+    """Yield vertical GRF samples from a supplied generator."""
+
     generator: Iterable[VerticalGRFSample] | None = None
 
     def __post_init__(self) -> None:
         self._iterator = iter(self.generator or _default_waveform())
 
     def start(self) -> None:
+        """No-op start hook matching the base interface."""
         return None
 
     def stop(self) -> None:
+        """No-op stop hook matching the base interface."""
         return None
 
     def read(self) -> VerticalGRFSample:
+        """Return the next sample, failing deterministically if exhausted."""
         try:
             return next(self._iterator)
         except StopIteration as exc:  # pragma: no cover - test harness

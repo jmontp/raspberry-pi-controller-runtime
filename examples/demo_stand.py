@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rpc_runtime.actuators.osl_actuator import OSLActuator, OSLLegConfig, OSLJoint
-from rpc_runtime.controllers.pi_controller import PIController, PIControllerConfig, PIControllerGains
+from rpc_runtime.actuators.osl_actuator import OSLActuator, OSLJoint, OSLLegConfig
+from rpc_runtime.controllers.pi_controller import (
+    PIController,
+    PIControllerConfig,
+    PIControllerGains,
+)
 from rpc_runtime.controllers.torque_models.onnx_runtime import ONNXTorqueModel
 from rpc_runtime.pipelines.runtime_loop import RuntimeLoop, RuntimeLoopConfig
-from rpc_runtime.sensors.combinators import ControlInputs
 from rpc_runtime.sensors.grf.fsr import BluetoothFSR, BluetoothFSRConfig
 from rpc_runtime.sensors.imu.physical import LegacyIMUAdapter, LegacyIMUConfig
 
@@ -26,7 +29,9 @@ def main() -> None:
         ki={"knee": 5, "ankle": 3},
     )
     torque_model = ONNXTorqueModel(bundle)
-    imu = LegacyIMUAdapter(LegacyIMUConfig(joints=("knee", "ankle"), segments=("thigh", "shank", "foot")))
+    imu = LegacyIMUAdapter(
+        LegacyIMUConfig(joints=("knee", "ankle"), segments=("thigh", "shank", "foot"))
+    )
     fsr = BluetoothFSR(BluetoothFSRConfig(address="E8:EA:71:E8:37:D1"))
     actuator = OSLActuator(
         OSLLegConfig(

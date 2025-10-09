@@ -17,12 +17,15 @@ class BaseScheduler(abc.ABC):
         """Yield the time since the loop started for each tick."""
 
     def close(self) -> None:
-        """Optional cleanup hook."""
+        """Optional cleanup hook executed when leaving the scheduler context."""
+        return None
 
     def __enter__(self) -> "BaseScheduler":
+        """Enter the scheduler context."""
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        """Exit the scheduler context, performing any cleanup."""
         self.close()
 
 
@@ -32,6 +35,7 @@ class SimpleScheduler(BaseScheduler):
     duration_s: float | None = None
 
     def ticks(self) -> Iterator[float]:
+        """Yield elapsed time while sleeping to maintain the requested frequency."""
         dt = 1.0 / self.frequency_hz
         start = time.monotonic()
         count = 0
@@ -56,6 +60,7 @@ class SoftRealtimeScheduler(BaseScheduler):
         self._loop = None
 
     def ticks(self) -> Iterator[float]:
+        """Yield elapsed times from the underlying soft-realtime implementation."""
         loop = self.loop_class(dt=1.0 / self.frequency_hz)
         self._loop = loop
         with contextlib.ExitStack() as stack:
@@ -64,10 +69,10 @@ class SoftRealtimeScheduler(BaseScheduler):
                 yield t
 
     def close(self) -> None:
+        """Call `stop()` on the underlying loop when available."""
         loop = self._loop
         if loop is None:
             return
         if hasattr(loop, "stop"):
             loop.stop()
         self._loop = None
-
