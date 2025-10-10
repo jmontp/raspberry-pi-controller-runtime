@@ -4,33 +4,23 @@ Every concrete IMU implementation in this package must follow the contract
 defined by `BaseIMU`. When adding a new adapter, make sure the following
 requirements are satisfied:
 
-1. **Initialisation**
-   - Accept a `BaseIMUConfig` (or subclass) and pass it to
-     `BaseIMU.__init__`. This validates joint/segment names, port mappings, and
-     staleness policy.
+See `sensors/README.md` for the shared configuration, lifecycle, and staleness
+handling expectations inherited from `BaseSensor`. IMU adapters add the
+following responsibilities:
 
-2. **Lifecycle hooks**
-   - Implement `start()` to open hardware connections, perform calibration, and
-     populate any internal buffers.
-   - Implement `stop()` to release all resources even on error paths.
-
-3. **Reading samples**
-   - `read()` must supply the latest `IMUSample`. If no fresh data is available,
-     call `self._handle_sample(None, fresh=False)` so the base class can enforce
-     the configured staleness policy.
-   - When a packet is received, build an `IMUSample` and return
-     `self._handle_sample(sample, fresh=True)` so counters and timestamps stay
-     in sync.
-
-4. **Error handling**
-   - Wrap hardware reads in `try/except` and log recoverable errors. When a
-     hard failure occurs, let the exception surface (it will be caught by the
-     runtime loop).
-
-5. **Joint/segment mapping**
+1. **Joint/segment mapping**
    - Ensure joint angle computations only reference available segments. The base
      class already validates this, but adapters should keep the mapping clear
      when translating raw sensor data into controller joints.
 
-Following these guidelines keeps every IMU adapter compatible with the runtime
-staleness/fallback logic and the controller’s expectations.
+2. **Calibration/reset hooks**
+   - Override `reset()` (or expose `zero()`) when the hardware supports explicit
+     realignment to controller coordinates.
+
+3. **Port mapping**
+   - Ensure `BaseIMUConfig.port_map` covers every segment required by the
+     adapter. This mapping bridges logical segments to physical transport
+     identifiers or device handles.
+
+Following these guidelines keeps IMU adapters aligned with the shared sensor
+contract while documenting the modality-specific expectations.

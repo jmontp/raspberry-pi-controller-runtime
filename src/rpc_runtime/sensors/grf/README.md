@@ -2,27 +2,21 @@
 
 Implementations of `BaseVerticalGRF` should adhere to the following contract:
 
-1. **Initialisation**
-   - Accept a `BaseVerticalGRFConfig` (or subclass) and pass it to
-     `BaseVerticalGRF.__init__` to validate channel names and staleness policy.
+See `sensors/README.md` for the shared configuration, lifecycle, and staleness
+handling expectations inherited from `BaseSensor`. GRF adapters add the
+following responsibilities:
 
-2. **Lifecycle hooks**
-   - Implement `start()` to initialise hardware connections or threads.
-   - Implement `stop()` to release resources and join worker threads.
-
-3. **Reading samples**
-   - When fresh data is available, build a `VerticalGRFSample` and return
-     `self._handle_sample(sample, fresh=True)`.
-   - If no new data arrives, call `self._handle_sample(None, fresh=False)` so the
-     base class can apply the configured fault strategy (`raise`, `fallback`,
-     `warn`).
-
-4. **Zeroing/baselines**
+1. **Zeroing/baselines**
    - Override `zero()` when the hardware supports in-place baseline updates.
 
-5. **Error handling**
-   - Catch recoverable hardware errors and log them; re-raise fatal errors so the
-     runtime loop can respond appropriately.
+2. **Channel conventions**
+   - Validate that `BaseVerticalGRFConfig.channel_names` aligns with the
+     adapter’s supported channel list (`CHANNEL_NAMES`) and document any sign or
+     scaling conventions via `FORCE_CONVENTIONS`.
 
-Following these guidelines ensures all GRF adapters integrate cleanly with the
-runtime’s staleness handling and schema expectations.
+3. **Hardware-specific fallback**
+   - Implement `_handle_sample` wrappers that build meaningful fallback samples
+     (e.g., zero force vectors) when the upstream transport returns stale data.
+
+Following these guidelines keeps GRF adapters aligned with the shared sensor
+contract while documenting the modality-specific expectations.
