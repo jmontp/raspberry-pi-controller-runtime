@@ -31,6 +31,8 @@ class BaseScheduler(abc.ABC):
 
 @dataclass(slots=True)
 class SimpleScheduler(BaseScheduler):
+    """Sleep-based scheduler useful for tests and non-realtime execution."""
+
     frequency_hz: float
     duration_s: float | None = None
 
@@ -53,10 +55,13 @@ class SimpleScheduler(BaseScheduler):
 
 @dataclass(slots=True)
 class SoftRealtimeScheduler(BaseScheduler):
+    """Wrap a soft-realtime loop implementation behind the scheduler interface."""
+
     frequency_hz: float
     loop_class: Callable[..., object]
 
     def __post_init__(self) -> None:
+        """Initialise the loop placeholder prior to lazy construction."""
         self._loop = None
 
     def ticks(self) -> Iterator[float]:

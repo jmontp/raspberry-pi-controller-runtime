@@ -15,7 +15,6 @@ def _default_samples(
     amplitude: float = 0.2,
 ) -> Sequence[IMUSample]:
     """Create a small sequence of random IMU samples for fall-back usage."""
-
     rng = random.Random(0)
     joints = len(config.joint_names)
     segments = len(config.segment_names)
@@ -49,6 +48,7 @@ class MockIMU(BaseIMU):
     _index: int = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """Initialise the base class and materialise the sample sequence."""
         BaseIMU.__init__(self, self.config_override)
         if self.samples is None:
             materialized = tuple(_default_samples(self.config))

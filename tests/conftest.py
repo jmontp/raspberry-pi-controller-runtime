@@ -1,3 +1,5 @@
+"""Pytest configuration ensuring the project src directory is importable."""
+
 import sys
 from pathlib import Path
 

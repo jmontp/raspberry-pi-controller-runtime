@@ -20,6 +20,7 @@ from rpc_runtime.sensors.imu.microstrain_3dm_gx5 import (
 
 
 def main() -> None:
+    """Demonstrate wiring the runtime loop with hardware-backed adapters."""
     bundle = Path("/path/to/export/onnx")
     config = PIControllerConfig(
         dt=1 / 500,

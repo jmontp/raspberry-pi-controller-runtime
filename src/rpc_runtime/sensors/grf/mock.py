@@ -33,6 +33,7 @@ class MockVerticalGRF(BaseVerticalGRF):
     _index: int = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """Materialise the sample generator and initialise base configuration."""
         BaseVerticalGRF.__init__(self, self.config_override)
         if self.generator is None:
             self._samples = _default_waveform(self.config)

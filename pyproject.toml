@@ -40,7 +40,11 @@ src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "C4", "I", "N"]
+extend-select = ["D"]
 ignore = ["E203", "E266"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.format]
 quote-style = "double"
@@ -59,4 +63,3 @@ filterwarnings = ["error"]
 markers = [
   "hardware: marks tests that require physical hardware",
 ]
-

@@ -15,6 +15,8 @@ class TorqueModelInput:
 
 
 class TorqueModel(abc.ABC):
+    """Abstract strategy for generating joint torques from feature vectors."""
+
     @abc.abstractmethod
     def run(self, features: dict[str, float]) -> dict[str, float]:
         """Run inference on a single feature vector."""

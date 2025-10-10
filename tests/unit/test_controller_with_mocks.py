@@ -1,3 +1,5 @@
+"""Unit tests covering controller+sensor interactions with mock devices."""
+
 import pytest
 
 from rpc_runtime.actuators.mock import MockActuator
@@ -60,6 +62,7 @@ def test_controller_with_mock_devices() -> None:
 
 
 def test_mock_imu_stale_fallback() -> None:
+    """Ensure IMU fallback strategy returns zeroed samples and records diagnostics."""
     config = BaseIMUConfig(max_stale_samples=1, fault_strategy="fallback")
     mock = MockIMU(samples=None, loop=True, config_override=config)
     mock.read()
@@ -72,6 +75,7 @@ def test_mock_imu_stale_fallback() -> None:
 
 
 def test_mock_imu_stale_raise() -> None:
+    """Verify IMU stale data raises when configured for strict handling."""
     config = BaseIMUConfig(max_stale_samples=1, fault_strategy="raise")
     mock = MockIMU(samples=None, loop=True, config_override=config)
     mock.read()

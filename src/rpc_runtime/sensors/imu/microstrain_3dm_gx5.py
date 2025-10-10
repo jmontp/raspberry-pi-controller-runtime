@@ -37,7 +37,6 @@ _DEFAULT_JOINTS: Tuple[str, ...] = (
 
 def _default_port_map() -> Dict[str, str]:
     """Placeholder port map – override in production deployments."""
-
     return {
         "thigh_r": "/dev/ttyIMU_thigh_r",
         "shank_r": "/dev/ttyIMU_shank_r",
@@ -95,6 +94,7 @@ class Microstrain3DMGX5IMU(BaseIMU):
     """Adapter for HBK MicroStrain 3DM-GX5-AHRS using MSCL."""
 
     def __init__(self, config: Microstrain3DMGX5Config | None = None) -> None:
+        """Initialise the MicroStrain adaptor and cache calibration metadata."""
         cfg = config or Microstrain3DMGX5Config()
         super().__init__(cfg)
         self._timeout_ms = cfg.timeout_ms

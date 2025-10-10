@@ -12,6 +12,8 @@ from .base import TorqueModel
 
 
 class TorchscriptTorqueModel(TorqueModel):
+    """Torque model executed via a TorchScript module."""
+
     def __init__(self, bundle_path: Path):
         """Load a TorchScript torque model exported for Raspberry Pi use.
 

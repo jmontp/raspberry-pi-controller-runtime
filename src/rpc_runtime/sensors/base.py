@@ -47,6 +47,7 @@ class BaseSensor(abc.ABC):
     """Common functionality for sensor adapters (staleness, diagnostics)."""
 
     def __init__(self, config: BaseSensorConfig | None = None) -> None:
+        """Normalise configuration and initialise staleness tracking."""
         cfg = config or BaseSensorConfig()
         self._config = self._validate_config(cfg)
         self._stale_samples = 0
@@ -63,10 +64,12 @@ class BaseSensor(abc.ABC):
     # ------------------------------------------------------------------
 
     def __enter__(self) -> "BaseSensor":
+        """Start the sensor when entering a context manager."""
         self.start()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        """Ensure resources are released when leaving a context."""
         self.stop()
 
     @abc.abstractmethod
@@ -83,6 +86,7 @@ class BaseSensor(abc.ABC):
 
     @property
     def diagnostics(self) -> SensorDiagnostics:
+        """Return the latest sampling diagnostics for the sensor."""
         if self._history:
             dt_min = min(self._history)
             dt_max = max(self._history)
@@ -104,6 +108,7 @@ class BaseSensor(abc.ABC):
 
     @classmethod
     def _validate_config(cls, config: BaseSensorConfig) -> BaseSensorConfig:
+        """Validate base configuration constraints shared across sensors."""
         if config.max_stale_samples < 0:
             raise ValueError("max_stale_samples must be non-negative")
         if config.max_stale_time_s < 0:
@@ -127,6 +132,7 @@ class BaseSensor(abc.ABC):
         fresh: bool,
         fallback_factory: Callable[[float], object],
     ):
+        """Track staleness and apply the configured strategy for missing data."""
         timestamp = getattr(sample, "timestamp", None) if sample is not None else None
         now = time.monotonic() if timestamp is None else timestamp
         reason = self._check_stale(now, fresh)
@@ -137,6 +143,7 @@ class BaseSensor(abc.ABC):
         return fallback_factory(now)
 
     def _check_stale(self, now: float, fresh: bool) -> str | None:
+        """Update counters and report a fault reason when thresholds are exceeded."""
         if fresh:
             if self._last_timestamp is not None:
                 dt = max(now - self._last_timestamp, 1e-9)
@@ -178,6 +185,7 @@ class BaseSensor(abc.ABC):
         reason: str,
         fallback_factory: Callable[[float], object],
     ):
+        """Execute the configured stale-data policy and return a safe sample."""
         fallback_sample = fallback_factory(timestamp)
         self._stale_samples = 0
         self._last_timestamp = timestamp

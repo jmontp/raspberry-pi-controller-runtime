@@ -85,6 +85,8 @@ class IMUSample:
 
 
 class IMUResettable(Protocol):
+    """Protocol for adapters that can re-align their orientation estimates."""
+
     def zero(self) -> None:
         """Reset internal offsets to align with controller coordinates."""
 
@@ -135,6 +137,7 @@ class BaseIMU(BaseSensor):
     SEGMENT_ANGLE_CONVENTIONS: dict[str, str] = DEFAULT_SEGMENT_ANGLE_CONVENTIONS.copy()
 
     def __init__(self, config: BaseIMUConfig | None = None) -> None:
+        """Validate IMU configuration and wire up shared sensor behaviour."""
         cfg = config or BaseIMUConfig()
         super().__init__(cfg)
 
@@ -245,7 +248,6 @@ class BaseIMU(BaseSensor):
     @staticmethod
     def _validate_joint_dependencies(joints: Tuple[str, ...], segments: Tuple[str, ...]) -> None:
         """Ensure joints only reference available segments."""
-
         required: Dict[str, Tuple[str, ...]] = {
             "knee_r": ("thigh_r", "shank_r"),
             "knee_l": ("thigh_l", "shank_l"),

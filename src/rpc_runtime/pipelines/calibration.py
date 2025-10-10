@@ -7,8 +7,10 @@ from typing import Protocol
 
 
 class Zeroable(Protocol):
+    """Protocol for sensors that expose a zeroing operation."""
+
     def zero(self) -> None:
-        ...
+        """Reset internal offsets to align with the controller frame."""
 
 
 @dataclass(slots=True)

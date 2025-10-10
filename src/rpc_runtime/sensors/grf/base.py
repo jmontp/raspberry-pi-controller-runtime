@@ -64,6 +64,7 @@ class BaseVerticalGRF(BaseSensor):
     FORCE_CONVENTIONS: Dict[str, str] = DEFAULT_FORCE_CONVENTIONS.copy()
 
     def __init__(self, config: BaseVerticalGRFConfig | None = None) -> None:
+        """Initialise the base with validated GRF configuration."""
         cfg = config or BaseVerticalGRFConfig()
         super().__init__(cfg)
 

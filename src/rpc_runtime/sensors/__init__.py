@@ -1,3 +1,5 @@
+"""Convenience imports for IMU, GRF, and combinator sensor adapters."""
+
 from .combinators import ControlInputs
 from .grf.base import BaseVerticalGRF, BaseVerticalGRFConfig, GRFStaleDataError, VerticalGRFSample
 from .grf.mock import MockVerticalGRF

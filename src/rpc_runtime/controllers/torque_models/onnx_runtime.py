@@ -17,6 +17,8 @@ except ImportError:  # pragma: no cover - dev environments without onnxruntime
 
 
 class ONNXTorqueModel(TorqueModel):
+    """Torque model backed by an ONNX inference session."""
+
     def __init__(self, bundle_path: Path):
         """Load an exported ONNX bundle produced by the torque-modeling project.
 
