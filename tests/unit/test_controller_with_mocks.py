@@ -9,7 +9,7 @@ from rpc_runtime.controllers.pi_controller import (
 from rpc_runtime.controllers.torque_models.mock import MockTorqueModel
 from rpc_runtime.pipelines.runtime_loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.sensors.grf.mock import MockVerticalGRF
-from rpc_runtime.sensors.imu.base import IMUSample
+from rpc_runtime.sensors.imu.base import BaseIMUConfig, IMUSample, IMUStaleDataError
 from rpc_runtime.sensors.imu.mock import MockIMU
 
 
@@ -57,3 +57,20 @@ def test_controller_with_mock_devices() -> None:
     assert last_command is not None
     assert last_command.torques_nm["knee"] == pytest.approx(0.05, rel=1e-6)
     assert last_command.torques_nm["ankle"] == pytest.approx(-0.05, rel=1e-6)
+
+
+def test_mock_imu_stale_fallback() -> None:
+    config = BaseIMUConfig(max_stale_samples=1, fault_strategy="fallback")
+    mock = MockIMU(samples=None, loop=True, config=config)
+    _ = mock.read()  # prime state
+    fallback = mock._handle_sample(None, fresh=False)
+    assert all(value == 0.0 for value in fallback.joint_angles_rad)
+    assert all(value == 0.0 for value in fallback.segment_angles_rad)
+
+
+def test_mock_imu_stale_raise() -> None:
+    config = BaseIMUConfig(max_stale_samples=1, fault_strategy="raise")
+    mock = MockIMU(samples=None, loop=True, config=config)
+    _ = mock.read()
+    with pytest.raises(IMUStaleDataError):
+        mock._handle_sample(None, fresh=False)

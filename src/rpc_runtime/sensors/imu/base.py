@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import abc
+import logging
+import time
 from dataclasses import dataclass, field
 from typing import Dict, Protocol, Tuple
 
@@ -84,6 +86,10 @@ class IMUResettable(Protocol):
         """Reset internal offsets to align with controller coordinates."""
 
 
+class IMUStaleDataError(RuntimeError):
+    """Raised when stale data thresholds are exceeded for an IMU source."""
+
+
 @dataclass(slots=True)
 class BaseIMUConfig:
     """Base configuration shared across IMU implementations."""
@@ -96,6 +102,15 @@ class BaseIMUConfig:
 
     port_map: Dict[str, str] = field(default_factory=lambda: dict(DEFAULT_PORT_MAP))
     """Mapping of segment name to underlying transport identifier/port."""
+
+    max_stale_samples: int = 5
+    """Number of consecutive stale reads tolerated before triggering a fault."""
+
+    max_stale_time_s: float = 0.2
+    """Maximum wall-clock time (seconds) without fresh data before fault."""
+
+    fault_strategy: str = "raise"
+    """One of ``{'raise', 'fallback', 'warn'}`` describing stale handling behaviour."""
 
 
 class BaseIMU(abc.ABC):
@@ -119,6 +134,11 @@ class BaseIMU(abc.ABC):
     def __init__(self, config: BaseIMUConfig | None = None) -> None:
         cfg = config or BaseIMUConfig()
         self._config = self._validate_config(cfg)
+        self._stale_samples = 0
+        self._last_sample_timestamp: float | None = None
+        self._max_stale_samples = max(0, self._config.max_stale_samples)
+        self._max_stale_time = max(0.0, self._config.max_stale_time_s)
+        self._fault_strategy = self._config.fault_strategy.lower()
 
     def __enter__(self) -> "BaseIMU":
         """Enter context manager and start streaming if required."""
@@ -230,6 +250,14 @@ class BaseIMU(abc.ABC):
         config.joint_names = joint_names
         config.segment_names = segment_names
         config.port_map = normalized_port_map
+        if config.max_stale_samples < 0:
+            raise ValueError("BaseIMUConfig.max_stale_samples must be non-negative")
+        if config.max_stale_time_s < 0:
+            raise ValueError("BaseIMUConfig.max_stale_time_s must be non-negative")
+        strategy = config.fault_strategy.lower()
+        if strategy not in {"raise", "fallback", "warn"}:
+            raise ValueError("BaseIMUConfig.fault_strategy must be 'raise', 'fallback', or 'warn'")
+        config.fault_strategy = strategy
         return config
 
     @staticmethod
@@ -260,3 +288,80 @@ class BaseIMU(abc.ABC):
             raise ValueError(
                 "Joint dependencies missing segments -> " + "; ".join(details)
             )
+
+    # ------------------------------------------------------------------
+    # Staleness management
+    # ------------------------------------------------------------------
+
+    def _handle_sample(self, sample: IMUSample | None, *, fresh: bool) -> IMUSample:
+        """Apply staleness policy and return a valid sample."""
+
+        timestamp = sample.timestamp if sample is not None else time.monotonic()
+        if fresh and sample is not None:
+            self._stale_samples = 0
+            self._last_sample_timestamp = timestamp
+            return sample
+
+        self._stale_samples += 1
+        if self._last_sample_timestamp is None:
+            self._last_sample_timestamp = timestamp
+        stale_time = timestamp - self._last_sample_timestamp
+
+        exceeded_samples = (
+            self._max_stale_samples
+            and self._stale_samples >= self._max_stale_samples
+        )
+        exceeded_time = (
+            self._max_stale_time
+            and stale_time >= self._max_stale_time
+        )
+
+        if exceeded_samples or exceeded_time:
+            reason = (
+                f"stale_samples={self._stale_samples} (max {self._max_stale_samples}),"
+                f" stale_time={stale_time:.3f}s (max {self._max_stale_time:.3f}s)"
+            )
+            return self._apply_fault_strategy(sample, timestamp, reason)
+
+        # Not yet exceeding thresholds – return existing sample or last-known fallback.
+        if sample is not None:
+            return sample
+        return self._fallback_sample(timestamp)
+
+    def _apply_fault_strategy(
+        self, sample: IMUSample | None, timestamp: float, reason: str
+    ) -> IMUSample:
+        """Execute configured fault strategy when stale limits are exceeded."""
+
+        strategy = self._fault_strategy
+        if strategy == "raise":
+            raise IMUStaleDataError(f"IMU stale data threshold exceeded ({reason})")
+
+        fallback_sample = sample if sample is not None else self._fallback_sample(timestamp)
+        self._stale_samples = 0
+        self._last_sample_timestamp = timestamp
+
+        if strategy == "fallback":
+            LOGGER.warning("IMU stale data detected (%s); using fallback sample", reason)
+            return fallback_sample
+
+        if strategy == "warn":
+            LOGGER.warning("IMU stale data detected (%s); passing through sample", reason)
+            return fallback_sample
+
+        # Unknown strategy, treat as raise.
+        raise IMUStaleDataError(
+            f"IMU stale data threshold exceeded ({reason}); unknown strategy '{strategy}'"
+        )
+
+    def _fallback_sample(self, timestamp: float) -> IMUSample:
+        joints = len(self.joint_names)
+        segments = len(self.segment_names)
+        return IMUSample(
+            timestamp=timestamp,
+            joint_angles_rad=tuple(0.0 for _ in range(joints)),
+            joint_velocities_rad_s=tuple(0.0 for _ in range(joints)),
+            segment_angles_rad=tuple(0.0 for _ in range(segments)),
+            segment_velocities_rad_s=tuple(0.0 for _ in range(segments)),
+        )
+LOGGER = logging.getLogger(__name__)

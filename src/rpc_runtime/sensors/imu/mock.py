@@ -77,4 +77,4 @@ class MockIMU(BaseIMU):
             self._index = 0
         sample = self._samples[self._index]
         self._index += 1
-        return sample
+        return self._handle_sample(sample, fresh=True)

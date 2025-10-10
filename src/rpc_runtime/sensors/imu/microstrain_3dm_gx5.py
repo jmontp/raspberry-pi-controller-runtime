@@ -9,7 +9,7 @@ from typing import Dict, Tuple
 
 import numpy as np
 
-from .base import BaseIMU, BaseIMUConfig, IMUSample
+from .base import LOGGER, BaseIMU, BaseIMUConfig, IMUSample
 
 try:  # pragma: no cover - hardware dependency
     import mscl
@@ -138,9 +138,11 @@ class Microstrain3DMGX5IMU(BaseIMU):
         """Fetch the latest IMU sample."""
         if not self._nodes:
             raise RuntimeError("IMU not started; call start() before read().")
-        segments = self._read_segments()
+        segments, fresh = self._read_segments()
         if segments is None:
             segments = self._last_segments
+            if segments is None or not len(segments):
+                return self._handle_sample(None, fresh=False)
         offset = segments - self._zero_offsets
         n_segments = len(self.segment_names)
         segment_angles = offset[:n_segments]
@@ -149,13 +151,14 @@ class Microstrain3DMGX5IMU(BaseIMU):
             segment_angles, segment_velocities
         )
         timestamp = time.monotonic()
-        return IMUSample(
+        sample = IMUSample(
             timestamp=timestamp,
             joint_angles_rad=tuple(joint_angles),
             joint_velocities_rad_s=tuple(joint_velocities),
             segment_angles_rad=tuple(segment_angles),
             segment_velocities_rad_s=tuple(segment_velocities),
         )
+        return self._handle_sample(sample, fresh=fresh)
 
     def reset(self) -> None:
         """Re-calibrate zero offsets for the connected IMUs."""
@@ -172,8 +175,8 @@ class Microstrain3DMGX5IMU(BaseIMU):
         """Collect samples and compute average offsets."""
         samples: list[np.ndarray] = []
         for _ in range(self._calibration_samples):
-            measurement = self._read_segments()
-            if measurement is not None:
+            measurement, fresh = self._read_segments()
+            if measurement is not None and fresh:
                 samples.append(measurement)
             time.sleep(self._calibration_interval)
         if not samples:
@@ -181,8 +184,8 @@ class Microstrain3DMGX5IMU(BaseIMU):
         stacked = np.stack(samples, axis=0)
         return stacked.mean(axis=0)
 
-    def _read_segments(self) -> np.ndarray | None:
-        """Read roll/gyro data for all segments; returns radians."""
+    def _read_segments(self) -> tuple[np.ndarray | None, bool]:
+        """Read roll/gyro data for all segments; returns radians and freshness flag."""
         new_sample = False
         angles = np.array(self._last_angles, copy=True)
         velocities = np.array(self._last_velocities, copy=True)
@@ -190,7 +193,11 @@ class Microstrain3DMGX5IMU(BaseIMU):
             node = self._nodes.get(segment)
             if node is None:
                 continue
-            packet = node.read()
+            try:
+                packet = node.read()
+            except Exception as exc:  # pragma: no cover - hardware failure
+                LOGGER.warning("Error reading segment %s: %s", segment, exc)
+                continue
             if not packet:
                 continue
             roll = packet.get("roll")
@@ -203,13 +210,13 @@ class Microstrain3DMGX5IMU(BaseIMU):
                 gyro = -gyro
             angles[idx] = roll
             velocities[idx] = gyro
-        combined = np.concatenate([angles, velocities])
         if new_sample:
+            combined = np.concatenate([angles, velocities])
             self._last_angles = angles
             self._last_velocities = velocities
             self._last_segments = combined
-            return combined
-        return None
+            return combined, True
+        return None, False
 
     def _compute_joint_values(
         self, segment_angles: np.ndarray, segment_velocities: np.ndarray

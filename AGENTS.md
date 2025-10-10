@@ -29,9 +29,13 @@ starting a new chat or automation session.
 - Controllers and sensor adapters must describe coordinate frames, units, and
   expectations in docstrings.
 - IMU adapters accept typed configs (`BaseIMUConfig` and subclasses) exposing
-  joint/segment ordering and `port_map` overrides. The MicroStrain driver uses
-  the MSCL Python bindings (`mscl`); ensure the library is installed on the Pi
-  when deploying hardware builds.
+  joint/segment ordering and `port_map` overrides. Staleness handling is
+  configured via `max_stale_samples`, `max_stale_time_s`, and `fault_strategy`
+  (`raise`, `fallback`, `warn`). The MicroStrain driver uses the MSCL Python
+  bindings (`mscl`); ensure the library is installed on the Pi when deploying
+  hardware builds.
+  - See `src/rpc_runtime/sensors/imu/README.md` for adapter implementation
+    guidelines.
 - Use mocks/adapters for hardware in tests (`MockIMU`, `MockVerticalGRF`,
   `MockActuator`, `MockTorqueModel`) instead of stubbing low-level libraries.
 
