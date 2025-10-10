@@ -44,12 +44,12 @@ class MockIMU(BaseIMU):
 
     samples: Iterable[IMUSample] | None = None
     loop: bool = False
-    config: BaseIMUConfig | None = None
+    config_override: BaseIMUConfig | None = None
     _samples: Sequence[IMUSample] = field(init=False, repr=False)
     _index: int = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        BaseIMU.__init__(self, self.config)
+        BaseIMU.__init__(self, self.config_override)
         if self.samples is None:
             materialized = tuple(_default_samples(self.config))
         else:

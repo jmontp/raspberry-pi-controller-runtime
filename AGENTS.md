@@ -36,6 +36,9 @@ starting a new chat or automation session.
   hardware builds.
   - See `src/rpc_runtime/sensors/imu/README.md` for adapter implementation
     guidelines.
+- GRF adapters follow the same pattern: use `BaseVerticalGRFConfig`, honour
+  staleness strategies, and implement the responsibilities described in
+  `src/rpc_runtime/sensors/grf/README.md`.
 - Use mocks/adapters for hardware in tests (`MockIMU`, `MockVerticalGRF`,
   `MockActuator`, `MockTorqueModel`) instead of stubbing low-level libraries.
 
