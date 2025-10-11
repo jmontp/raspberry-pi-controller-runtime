@@ -82,3 +82,16 @@ def test_mock_imu_stale_raise() -> None:
     mock.read()
     with pytest.raises(IMUStaleDataError):
         mock._handle_sample(None, fresh=False)
+
+
+def test_mock_imu_stale_warn_pass_through() -> None:
+    """Warn strategy should preserve latest sample while recording diagnostics."""
+    config = BaseIMUConfig(max_stale_samples=1, fault_strategy="warn")
+    mock = MockIMU(samples=None, loop=True, config_override=config)
+    fresh_sample = mock.read()
+    mock.read()
+    returned = mock._handle_sample(fresh_sample, fresh=False)
+    diag = mock.diagnostics
+    assert returned is fresh_sample
+    assert diag.stale_samples == 0
+    assert diag.total_samples >= 1

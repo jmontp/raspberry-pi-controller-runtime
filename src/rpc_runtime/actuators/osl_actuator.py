@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict
 
-from .base import ActuatorError, BaseActuator, TorqueCommand
+from .base import ActuatorError, BaseActuator, BaseActuatorConfig, TorqueCommand
 
 try:  # pragma: no cover - hardware dependency
     from opensourceleg.osl import OpenSourceLeg
@@ -46,30 +46,24 @@ class OSLActuator(BaseActuator):
             raise RuntimeError(
                 "opensourceleg.osl.OpenSourceLeg import failed. Install osl before use."
             )
-        self._config = config
+        joint_names = tuple(joint.name for joint in config.joints)
+        super().__init__(BaseActuatorConfig(joint_names=joint_names))
+        self._leg_config = config
         self._leg = OpenSourceLeg(frequency=config.controller_hz)
         self._joint_handles: Dict[str, object] = {}
 
     def start(self) -> None:
-        """Connect to hardware and register joints with the OSL API.
-
-        Returns:
-            None
-        """
-        for joint in self._config.joints:
+        """Connect to hardware and register joints with the OSL API."""
+        for joint in self._leg_config.joints:
             self._leg.add_joint(name=joint.name, gear_ratio=joint.gear_ratio, port=joint.port)
         self._leg.__enter__()
-        for joint in self._config.joints:
+        for joint in self._leg_config.joints:
             handle = getattr(self._leg, joint.name)
             handle.set_mode(handle.control_modes.current)
             self._joint_handles[joint.name] = handle
 
     def stop(self) -> None:
-        """Return hardware to a safe state and release the OSL context.
-
-        Returns:
-            None
-        """
+        """Return hardware to a safe state and release the OSL context."""
         # Return hardware to idle modes.
         for handle in self._joint_handles.values():
             try:
@@ -79,18 +73,8 @@ class OSLActuator(BaseActuator):
         self._leg.__exit__(None, None, None)
         self._joint_handles.clear()
 
-    def apply(self, command: TorqueCommand) -> None:
-        """Send a torque command to all configured joints.
-
-        Args:
-            command: Desired torque values keyed by joint name.
-
-        Raises:
-            ActuatorError: If the command references an unknown joint.
-
-        Returns:
-            None
-        """
+    def _apply_command(self, command: TorqueCommand) -> None:
+        """Send a torque command to all configured joints."""
         missing = set(command.torques_nm) - set(self._joint_handles)
         if missing:
             raise ActuatorError(f"Torque command contains unknown joints: {missing}")

@@ -27,3 +27,15 @@ def test_mock_grf_stale_raise() -> None:
     except GRFStaleDataError:
         return
     raise AssertionError("Expected GRFStaleDataError when stale data exceeds threshold")
+
+
+def test_mock_grf_warn_pass_through() -> None:
+    """Warn strategy should reuse last sample while resetting stale counters."""
+    config = BaseVerticalGRFConfig(max_stale_samples=1, fault_strategy="warn")
+    grf = MockVerticalGRF(generator=None, config_override=config, loop=True)
+    first = grf.read()
+    grf.read()
+    returned = grf._handle_sample(first, fresh=False)
+    diag = grf.diagnostics
+    assert returned is first
+    assert diag.stale_samples == 0
