@@ -68,12 +68,14 @@ flowchart TD
 
     subgraph RuntimeLoop [Runtime Loop]
         direction LR
-        T[Timing management] --> R1[Get feature packet from DataWrangler]
+        R0[Runtime orchestrator] --> R1[Get feature packet from DataWrangler]
         R1 --> R2[Run controller/model]
-        R2 --> R3[Apply torques]
-        R3 --> T
+        R2 --> R3[Safety manager]
+        R3 --> R4[Apply torques]
+        R4 --> T[Scheduler]
+        T --> R0
     end
-    I4 --> T
+    I4 --> R0
     style RuntimeLoop fill:#f0f5ff,stroke:#2b6cb0,stroke-width:2px
 ```
 
@@ -114,29 +116,73 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    participant Runtime as Runtime Loop
+    participant Scheduler as Scheduler
+    participant Runtime as Runtime orchestrator
     participant Wrangler as DataWrangler
     participant SensorType as Sensor Type
     participant Driver as Hardware Driver
     participant Controller as Controller
-    participant Actuator as Actuator
+    participant Actuator as Actuator base
 
+    Scheduler->>Runtime: tick start
     Runtime->>Wrangler: get_packet
     Wrangler->>SensorType: fetch required signals
     SensorType->>Driver: read_native
     Driver-->>SensorType: measured values
     SensorType-->>Wrangler: canonical signals
-    Wrangler-->>Controller: feature vector
-    Controller-->>Actuator: torque command
+    Wrangler-->>Runtime: feature vector
+    Runtime->>Controller: tick(features)
+    Controller-->>Runtime: torque command
+    Runtime->>Actuator: apply(command)
     Actuator-->>Runtime: apply complete
+    Runtime->>Scheduler: report compute + actual dt
+    Scheduler-->>Scheduler: record metrics
 ```
 
-### DataWrangler relationships
+### High-level class relationships
 
 ```mermaid
 classDiagram
 %% Legend: [A] abstract  [I] implemented
 
+class BaseSensorConfig {
+  +max_stale_samples
+  +max_stale_time_s
+  +fault_strategy
+  +diagnostics_window
+}
+class SensorDiagnostics {
+  +last_timestamp
+  +hz_estimate
+  +hz_history
+  +stale_samples
+  +total_samples
+}
+class BaseSensor {
+  +config
+  +diagnostics
+  start() [A]
+  stop() [A]
+  provided_signals() [A]
+  can_provide(signals) [A]
+  probe_hardware(signals) [A]
+  fetch(signals) [A]
+}
+class SensorTypeBase {
+  +pipeline
+  +drivers
+  provided_signals() [I]
+  can_provide(signals) [I]
+  probe_hardware(signals) [I]
+  fetch(signals) [I]
+}
+class SensorHardwareDriver {
+  +start() [A]
+  +stop() [A]
+  +probe_hardware(requirements) [A]
+  +read_native() [A]
+  +diagnostics
+}
 class DataWrangler {
   +required_inputs
   +feature_order
@@ -144,69 +190,118 @@ class DataWrangler {
   +sensor_types
   +validate_plan() [I]
   +get_packet() [I]
+  +write_log(sample) [I]
 }
 class Controller {
   +expected_inputs()[I]
   +expected_outputs()[I]
+  +tick(features)[I]
 }
-class SensorTypeBase {
-  +provided_signals()[I]
-  +can_provide(signals)[I]
-  +probe_hardware(signals)[I]
-  +fetch(signals)[I]
-}
-class SensorHardwareDriver {
-  +start() [A]
-  +stop() [A]
-  +probe_hardware(requirements)[A]
-  +read_native()[A]
-}
-class Actuator {
-  +start() [A]
-  +stop() [A]
-  +apply(command)[I]
-  +fault_if_needed()[I]
-}
-class TimingManager {
+class Scheduler {
   +dt
   +loop()[I]
   +sleep_until_next_tick()[I]
+  +record_dt(actual, expected)[I]
+  +record_compute_duration(duration)[I]
+  +dt_history
+  +compute_history
+  +diagnostics_path
+  +write_diagnostics() [I]
+}
+class ActuatorBase {
+  +diagnostics
+  start() [A]
+  stop() [A]
+  apply(command)[I]
+  fault_if_needed()[I]
+}
+class ActuatorHardwareDriver {
+  +start() [A]
+  +stop() [A]
+  +apply_torque(value)[A]
+  +diagnostics
+}
+class SafetyManager {
+  +limits
+  +enforce(command)[I]
+  +diagnostics
+}
+class Runtime {
+  +scheduler
+  +data_wrangler
+  +controller
+  +actuator
+  +safety_manager
+  +run()[I]
+  +log_path
 }
 
-DataWrangler --> Controller : queries requirements
-DataWrangler *-- SensorTypeBase : owns
+BaseSensor *-- SensorDiagnostics
+BaseSensor --> BaseSensorConfig
+SensorTypeBase --|> BaseSensor
 SensorTypeBase *-- SensorHardwareDriver : owns
-Controller --> Actuator : sends torque command
-TimingManager --> DataWrangler : schedules fetch
-TimingManager --> Controller : triggers ticks
-TimingManager --> Actuator : enforces cadence
+DataWrangler *-- SensorTypeBase : owns
+DataWrangler --> Controller : queries requirements
+Runtime *-- DataWrangler : owns
+Runtime *-- SafetyManager : owns
+Runtime *-- ActuatorBase : owns
+ActuatorBase *-- ActuatorHardwareDriver : owns
+Runtime --> Controller : requests torques
+Runtime --> Scheduler : reports timing
+SafetyManager --> ActuatorBase : clamp / monitor
+
 ```
+
+
+
+The scheduler keeps its own history of expected versus actual loop periods and controller compute durations so timing jitter can be analysed without relying on sensor diagnostics. Sensors continue to compute their own timing statistics via SensorDiagnostics so data validity remains decoupled from scheduler timing.
+Each run writes artefacts into a timestamped folder containing:
+
+- `run.log` — merged signal + torque stream annotated with timestamps.
+- `diagnostics/sensors/` — per-sensor diagnostic logs (staleness, rates).
+- `diagnostics/actuators/` — actuator diagnostics (faults, clamp counts).
+- `diagnostics/scheduler/` — loop timing metrics (dt history, compute times).
+- `diagnostics/safety/` — safety limit events and clamp statistics.
+
+The controller remains a pure mapping from inputs to torque commands; limit enforcement and actuator interfacing live in the runtime via the SafetyManager.
+ActuatorBase forwards safe torques to the concrete ActuatorHardwareDriver, which owns the platform-specific I/O and diagnostics.
+
 
 ## Control loop sequence
 
 ```mermaid
 sequenceDiagram
-    participant Timing as Timing manager
+    participant Scheduler as Scheduler
+    participant Runtime as Runtime orchestrator
     participant Wrangler as DataWrangler
     participant Sensor as Sensor type
     participant Driver as Hardware driver
     participant Controller as Controller
-    participant Actuator as Actuator
+    participant Safety as Safety manager
+    participant Actuator as Actuator base
 
-    Timing->>Wrangler: init(controller, hardware_config)
+    Scheduler->>Runtime: start(run_config)
+    Runtime->>Wrangler: init(controller, hardware_config)
     Wrangler->>Sensor: build & probe
     Sensor->>Driver: start & probe
-    Wrangler-->>Timing: ready
+    Wrangler-->>Runtime: ready
 
     loop Each tick
-        Timing->>Wrangler: get_packet
+        Scheduler->>Runtime: tick start
+        Runtime->>Wrangler: get_packet
         Wrangler->>Sensor: fetch(required signals)
         Sensor->>Driver: read_native
         Driver-->>Sensor: measurements
         Sensor-->>Wrangler: canonical signals
-        Wrangler-->>Controller: feature vector
-        Controller-->>Actuator: torque command
-        Actuator-->>Timing: apply complete
+        Wrangler-->>Runtime: feature vector
+        Runtime->>Controller: tick(features)
+        Controller-->>Runtime: torque command
+        Runtime->>Safety: enforce_safety(command)
+        Safety-->>Runtime: safe command
+        Runtime->>Actuator: apply(safe command)
+        Actuator-->>Runtime: apply complete
+        Runtime->>Scheduler: report compute + actual dt
+        Scheduler-->>Scheduler: record dt metrics
     end
 ```
 
@@ -242,21 +337,4 @@ class SensorHardwareDriver {
     SensorTypeBase *-- SignalPipeline
     SignalPipeline ..> SignalResolver : uses
     SignalPipeline ..> SensorHardwareDriver : pulls measured prereqs
-```
-
-### Per‑tick resolution flow
-
-```mermaid
-sequenceDiagram
-    participant ST as SignalPipeline (in SensorTypeBase)
-    participant D1 as Driver A
-    participant D2 as Driver B
-
-    Note over ST: Determine closure of dependencies for requested signals
-    ST->>D1: fetch measured prerequisites (subset)
-    D1-->>ST: measurement values
-    ST->>D2: fetch measured prerequisites (subset)
-    D2-->>ST: measurement values
-    ST->>ST: compute derived signals via resolvers (topological order)
-    ST-->>Runtime: canonical signal map / normalized sample
 ```

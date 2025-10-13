@@ -1,28 +1,74 @@
-controller:
-  frequency_hz: 500
-  torque_scale: 0.1
-  torque_limit_nm: 25
-  joints: ["knee", "ankle"]
-  gains:
-    kp:
-      knee: 120
-      ankle: 80
-    ki:
-      knee: 5
-      ankle: 3
-imu:
-  type: "legacy"
-  joints: ["knee", "ankle"]
-  segments: ["thigh", "shank", "foot"]
-vertical_grf:
-  type: "bluetooth_fsr"
-  address: "E8:EA:71:E8:37:D1"
-actuator:
-  joints:
-    - name: "knee"
-      gear_ratio: 9.0
-      port: "/dev/ttyActPackRightKnee"
-    - name: "ankle"
-      gear_ratio: 9.0
-      port: "/dev/ttyActPackRightAnkle"
-  controller_hz: 500
+profile:
+  name: mock_pi_default
+  controller: pi_mock
+  actuator: mock_actuator
+  sensors:
+    - name: imu
+      binding: mock_imu
+      required: true
+    - name: vertical_grf
+      binding: mock_grf
+      required: false
+
+schemas:
+  pi_inputs:
+    description: "Two-joint controller inputs aligned with training feature order."
+    channels:
+      - knee_angle
+      - knee_velocity
+      - ankle_angle
+      - ankle_velocity
+      - { signal: grf_total, required: false, default: 0.0 }
+  pi_outputs:
+    description: "Torque outputs expected by the mock actuator."
+    channels:
+      - knee_torque
+      - ankle_torque
+
+controllers:
+  pi_mock:
+    implementation: rpc_runtime.controllers.pi_controller.PIController
+    input_schema: pi_inputs
+    output_schema: pi_outputs
+    joints: ["knee", "ankle"]
+    description: "Mock PI controller bundle for development and testing."
+    config:
+      dt: 0.01
+      torque_scale: 0.1
+      torque_limit_nm: 10.0
+      gains:
+        kp:
+          knee: 0.0
+          ankle: 0.0
+        ki:
+          knee: 0.0
+          ankle: 0.0
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
+      config:
+        outputs:
+          knee: 0.0
+          ankle: 0.0
+
+sensors:
+  mock_imu:
+    driver: rpc_runtime.sensors.imu.mock.MockIMU
+    provides:
+      - knee_angle
+      - knee_velocity
+      - ankle_angle
+      - ankle_velocity
+    config:
+      loop: true
+    required: true
+  mock_grf:
+    driver: rpc_runtime.sensors.grf.mock.MockVerticalGRF
+    provides:
+      - grf_total
+    config: {}
+    required: false
+
+actuators:
+  mock_actuator:
+    driver: rpc_runtime.actuators.mock.MockActuator
+    config: {}

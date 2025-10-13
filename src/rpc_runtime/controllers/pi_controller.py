@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict
 
+from rpc_runtime.config.models import InputSchema
+
 from ..actuators.base import TorqueCommand
 from ..sensors.combinators import ControlInputs
 from .torque_models.base import TorqueModel
@@ -70,6 +72,7 @@ class PIController:
         config: PIControllerConfig,
         gains: PIControllerGains,
         torque_model: TorqueModel,
+        input_schema: InputSchema | None = None,
     ) -> None:
         """Initialise controller state and allocate per-joint filters.
 
@@ -82,6 +85,7 @@ class PIController:
         self._torque_model = torque_model
         self._kp = gains.kp
         self._ki = gains.ki
+        self._input_schema = input_schema
         self._integral_error = dict.fromkeys(config.joints, 0.0)
         self._torque_filters = {
             joint: LowPassFilter(config.torque_filter_alpha) for joint in config.joints
@@ -127,21 +131,36 @@ class PIController:
 
         Returns:
             Dict[str, float]: Feature values keyed by feature name.
+
+        Raises:
+            HardwareAvailabilityError: When required schema signals cannot be resolved.
         """
-        imu = inputs.imu
-        features: Dict[str, float] = {}
-        for idx, joint in enumerate(self._config.joints):
-            try:
-                angle = imu.joint_angles_rad[idx]
-                velocity = imu.joint_velocities_rad_s[idx]
-            except IndexError:
-                angle = 0.0
-                velocity = 0.0
-            features[f"{joint}_angle"] = angle
-            features[f"{joint}_velocity"] = velocity
+        if self._input_schema is not None:
+            features = dict(self._input_schema.build_features(inputs))
+        else:
+            imu = inputs.imu
+            features = {}
+            for idx, joint in enumerate(self._config.joints):
+                try:
+                    angle = imu.joint_angles_rad[idx]
+                    velocity = imu.joint_velocities_rad_s[idx]
+                except IndexError:
+                    angle = 0.0
+                    velocity = 0.0
+                features[f"{joint}_angle"] = angle
+                features[f"{joint}_velocity"] = velocity
+                features.setdefault(f"{joint}_desired_angle", angle)
+                features.setdefault(f"{joint}_desired_velocity", velocity)
+            if inputs.vertical_grf is not None:
+                for i, value in enumerate(inputs.vertical_grf.forces_newton):
+                    features[f"grf_{i}"] = value
+            return features
+
+        for joint in self._config.joints:
+            angle_key = f"{joint}_angle"
+            velocity_key = f"{joint}_velocity"
+            angle = features.get(angle_key, 0.0)
+            velocity = features.get(velocity_key, 0.0)
             features.setdefault(f"{joint}_desired_angle", angle)
             features.setdefault(f"{joint}_desired_velocity", velocity)
-        if inputs.vertical_grf is not None:
-            for i, value in enumerate(inputs.vertical_grf.forces_newton):
-                features[f"grf_{i}"] = value
         return features
