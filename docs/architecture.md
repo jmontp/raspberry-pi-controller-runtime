@@ -3,9 +3,9 @@
 The runtime splits responsibilities into four layers:
 
 1. **Sensors** — `rpc_runtime.sensors` exposes hardware‑agnostic modality bases (e.g., IMU/GRF) and hardware drivers. Adapters translate vendor payloads into standardized samples; modality bases aggregate multiple drivers and compute canonical signals.
-2. **Controllers** — `rpc_runtime.controllers` implements the PI controller skeleton with replaceable torque models (`onnxruntime`, `torchscript`). Controllers declare required input/output signals.
+2. **DataWrangler & Controllers** — The DataWrangler compiles controller-required signals from the sensors and feeds them to controllers in `rpc_runtime.controllers`. Controllers (e.g., the PI controller with ONNX/TorchScript torque models) declare required input/output signals and emit torque commands.
 3. **Actuators** — `rpc_runtime.actuators` provides safe torque application and fault reporting. Adapters validate joint membership and enforce optional torque limits.
-4. **Pipelines** — `rpc_runtime.pipelines.RuntimeLoop` orchestrates the read→compute→actuate loop; `rpc_runtime.pipelines.scheduler` abstracts timing. A lightweight DataWrangler compiles requested signals into a model‑ready feature packet.
+4. **Timing management** — A scheduler component (e.g., `rpc_runtime.pipelines.scheduler` or platform-specific timer) governs loop cadence, ensuring deterministic timing when needed.
 
 Configuration lives in a single `hardware_config.yaml`. Controllers declare the
 canonical signals they consume and produce; the hardware config maps measured
@@ -68,11 +68,12 @@ flowchart TD
 
     subgraph RuntimeLoop [Runtime Loop]
         direction LR
-        R1[Get feature packet from DataWrangler] --> R2[Run controller/model]
+        T[Timing management] --> R1[Get feature packet from DataWrangler]
+        R1 --> R2[Run controller/model]
         R2 --> R3[Apply torques]
-        R3 --> R1
+        R3 --> T
     end
-    I4 --> R1
+    I4 --> T
     style RuntimeLoop fill:#f0f5ff,stroke:#2b6cb0,stroke-width:2px
 ```
 
@@ -166,70 +167,47 @@ class Actuator {
   +apply(command)[I]
   +fault_if_needed()[I]
 }
+class TimingManager {
+  +dt
+  +loop()[I]
+  +sleep_until_next_tick()[I]
+}
 
 DataWrangler --> Controller : queries requirements
 DataWrangler *-- SensorTypeBase : owns
 SensorTypeBase *-- SensorHardwareDriver : owns
 Controller --> Actuator : sends torque command
+TimingManager --> DataWrangler : schedules fetch
+TimingManager --> Controller : triggers ticks
+TimingManager --> Actuator : enforces cadence
 ```
 
 ## Control loop sequence
 
 ```mermaid
 sequenceDiagram
-    participant App as App Launcher
-    participant Runtime as Runtime Loop
-    participant Profile as Profile Schemas
-    participant Registry as Canonical Registry
+    participant Timing as Timing manager
     participant Wrangler as DataWrangler
-    participant SensorA as Sensor Type A
-    participant DriverA as Hardware Driver A
-    participant SensorB as Sensor Type B
-    participant DriverB as Hardware Driver B
-    participant Ctl as Controller
-    participant Model as Torque Model
-    participant Act as Actuator
+    participant Sensor as Sensor type
+    participant Driver as Hardware driver
+    participant Controller as Controller
+    participant Actuator as Actuator
 
-    App->>Runtime: Load controller and hardware config
-    Runtime->>Ctl: expected_inputs / expected_outputs
-    Runtime->>Wrangler: init(required_inputs, hardware config)
-
-    Note over Wrangler: validate and compile plan (capability + hardware)
-    Wrangler->>Registry: validate signal names
-    Wrangler->>SensorA: can_provide and probe_hardware
-    Wrangler->>SensorB: can_provide and probe_hardware (optional)
-    Wrangler-->>Runtime: OK or error
-
-    Runtime->>SensorA: start
-    SensorA->>DriverA: open/connect
-    Runtime->>SensorB: start (optional)
-    SensorB->>DriverB: open/connect (optional)
-    Runtime->>Act: start
-    Runtime->>Ctl: reset
+    Timing->>Wrangler: init(controller, hardware_config)
+    Wrangler->>Sensor: build & probe
+    Sensor->>Driver: start & probe
+    Wrangler-->>Timing: ready
 
     loop Each tick
-        Runtime->>Wrangler: get_packet
-        Wrangler->>SensorA: fetch subset
-        SensorA->>DriverA: read_native
-        DriverA-->>SensorA: values
-        Wrangler->>SensorB: fetch subset (optional)
-        SensorB->>DriverB: read_native
-        DriverB-->>SensorB: values
-        Wrangler-->>Runtime: features (ordered)
-
-        Runtime->>Ctl: tick(features)
-        Ctl->>Model: run(features)
-        Model-->>Ctl: feedforward torques
-        Ctl-->>Runtime: TorqueCommand
-        Runtime->>Act: apply(command)
-        Runtime->>Act: fault_if_needed
+        Timing->>Wrangler: get_packet
+        Wrangler->>Sensor: fetch(required signals)
+        Sensor->>Driver: read_native
+        Driver-->>Sensor: measurements
+        Sensor-->>Wrangler: canonical signals
+        Wrangler-->>Controller: feature vector
+        Controller-->>Actuator: torque command
+        Actuator-->>Timing: apply complete
     end
-
-    Runtime->>SensorA: stop
-    SensorA->>DriverA: close
-    Runtime->>SensorB: stop (optional)
-    SensorB->>DriverB: close (optional)
-    Runtime->>Act: stop
 ```
 
 <!-- Legacy interface overview removed in favor of DataWrangler-centric diagrams. -->
