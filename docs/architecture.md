@@ -34,9 +34,10 @@ flowchart TD
     subgraph RuntimeLoop ["Runtime Loop"]
         direction LR
         R0["Runtime orchestrator"] --> R1["Fetch feature packet"]
-        R1 --> R2["Run controller/model"]
-        R2 --> R3["Safety manager"]
-        R3 --> R4["Apply torques"]
+        R1 --> R2["Compute torque command"]
+        R2 --> R3["Enforce safety limits"]
+        R3 --> Rlog["Log features + torques"]
+        Rlog --> R4["Apply torques"]
         R4 --> T["Scheduler"]
         T --> R0
     end
@@ -51,10 +52,10 @@ flowchart TD
   signal names, and hands the DataWrangler enough metadata to build a plan.
 - **DataWrangler plan** assigns each required signal to a concrete sensor type,
   computes derived feature dependencies, and allocates a reusable feature buffer
-  with deterministic ordering.
+  mirroring the controller-provided ordering.
 - **Runtime loop** repeatedly asks the DataWrangler for the next feature packet,
-  ticks the controller, enforces safety, and issues actuator commands while the
-  scheduler holds the desired loop period.
+  computes torque commands, enforces safety limits, logs the features/torques,
+  and issues actuator commands while the scheduler holds the desired loop period.
 - **Diagnostics sink** receives run artefacts (merged logs, sensor timing,
   safety events) so field deployments can be audited after the fact.
 
@@ -62,23 +63,158 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    config["Load hardware_config.yaml"] -->|schemas + drivers| plan["Build DataWrangler plan"]
     plan -->|modality specs| sensors["Sensor types + drivers"]
-    plan -->|feature order| buffer["Feature buffer (canonical order)"]
+    plan -->|feature order| buffer["Feature buffer (controller order)"]
     sensors -->|canonical samples| buffer
-    buffer -->|feature packet| controller["Controller + torque model"]
+    buffer -->|feature packet| controller["Torque computation"]
     controller -->|torque command| safety["Safety manager"]
-    safety -->|safe torque| actuator["Actuator adapter"]
+    safety -->|safe torque| runtime["Runtime orchestrator"]
+    runtime -->|log features + torques| diagnostics["Diagnostics artefacts"]
+    runtime -->|safe torque| actuator["Actuator adapter"]
     actuator -->|applied torque| scheduler["Scheduler loop"]
-    scheduler -->|dt history| runtime["Runtime orchestrator"]
+    scheduler -->|dt history| runtime
     runtime -->|poll| sensors
-    runtime -->|log packet| diagnostics["Diagnostics artefacts"]
     diagnostics --> operator(("Operator"))
 ```
 
 DataWrangler initialises once, so the runtime loop simply requests the next
-packet each tick. Sensors must return canonical values in the agreed order, and
-derived feature resolvers run using the same metadata that seeded the plan.
+packet each tick. Sensors emit canonical values; the wrangler places them into
+the buffer following the controller-defined order, and derived feature resolvers
+run using the same metadata that seeded the plan. The runtime orchestrator logs
+each feature/torque snapshot before applying the safety-clamped command to the
+actuator.
+
+## Component Contracts
+
+### DataWrangler interface
+
+- `start(controller_manifest, config_path)` — performs all build-time work:
+  parses configuration, validates canonical signals, resolves
+  `sensor_types`/`measured_signals`/`derived_signals`, allocates the reusable
+  feature buffer (aligned to the controller-requested order), opens sensor
+  contexts, primes diagnostics, and returns a readiness report. Any validation
+  or probe failure raises `HardwareAvailabilityError`.
+- `get_packet()` — populates the buffer for the latest tick and returns a
+  read-only view plus metadata (timestamps, staleness flags, defaults used).
+  Raises `SensorStaleDataError` when thresholds are exceeded (honouring the
+  configured `fault_strategy`) and bubbles `HardwareAvailabilityError` for
+  modality failures.
+- `close()` — tears down sensor contexts and flushes modality diagnostics.
+
+Plan construction, buffer allocation, and other helpers remain internal to
+`start()`; the wrangler is single-threaded and must not mutate plan metadata
+once the loop begins so `get_packet()` can operate lock-free.
+
+### Controller contract
+
+- Controllers expose `expected_inputs` and `expected_outputs` as ordered lists
+  so the wrangler can align the feature buffer exactly as requested.
+- Controllers receive a `FeatureView` (mapping-like object) from the wrangler.
+  They must not mutate it. Optional channels are guaranteed to exist with a
+  default value.
+- Controllers propagate `ControllerFault` exceptions when they cannot produce a
+  torque command (e.g., model runtime error). The runtime catches these and
+  transitions into a degraded or fault state depending on `fault_strategy`.
+
+### Feature buffer ownership
+
+- Allocated once, reused every tick; the runtime may retain a pointer for
+  diagnostics, but only the wrangler writes into it.
+- Buffer indices are stable across the session; derived feature resolvers write
+  directly to their assigned slots.
+- Each tick, the wrangler marks optional channels that were defaulted so the
+  diagnostics sink can record coverage (e.g., missing GRF sensor).
+
+### Diagnostics sink contract
+
+- The runtime depends on an injectable `DiagnosticsSink` responsible solely for
+  runtime-level logging (feature packets, raw torques, safety-adjusted torques,
+  scheduler metrics).
+- Core interface:
+  - `log_tick(*, timestamp, feature_packet, torque_command_raw, torque_command_safe, scheduler)` —
+    invoked once per tick after the safety manager clamps outputs and before the
+    actuator runs. Diagnostics errors must never break the control loop; sinks
+    swallow/report internally.
+  - `flush()` — called during teardown to ensure any buffered artefacts reach
+    persistent storage.
+- The sink does not duplicate per-sensor or per-actuator diagnostics; those stay
+  with modality-specific loggers.
+- Implementations must be non-blocking: heavy IO should occur via buffered
+  appends or background workers so scheduler cadence remains stable.
+
+## Safety and runtime states
+
+The runtime behaves as a small state machine:
+
+1. **Initialising** — building the plan, probing hardware, zeroing sensors.
+   Failure exits to **Faulted**.
+2. **Calibration** — optional phase where `CalibrationRoutine` runs. Failure
+   either retries (bounded by `calibration.max_attempts`) or transitions to
+   **Degraded** with defaults.
+3. **Running** — controller torque computations succeed, scheduler cadence remains within tolerance.
+4. **Degraded** — non-critical sensor or actuator faults occur. Runtime keeps
+   looping but clamps torques to safe defaults and emits warnings; if the
+   failing component recovers before `recovery_timeout_s`, state returns to
+   **Running**.
+5. **Faulted** — critical failure (e.g., controller exception, actuator write
+   failure) or operator stop. Actuator receives `zero_torque` command before the
+   loop exits. Diagnostics flush state machine transitions for post-mortem
+   analysis.
+
+The SafetyManager enforces torque limits per joint and records clamp events. It
+also exposes a `transition_to_safe_state()` hook for the runtime to invoke when
+entering **Faulted** so downstream hardware can coast safely.
+
+## Timing and concurrency
+
+- Wranglers and controllers run in the scheduler thread; sensor reads are
+  blocking but expected to complete within `max_sensor_read_s` (configured per
+  modality). Long-running sensors must provide non-blocking implementations or
+  move heavy work into their drivers with caching.
+- The scheduler governs cadence using monotonic time. It records:
+  - `dt_target`, `dt_actual`, and the cumulative jitter metrics.
+  - Controller compute duration (`compute_time_s`).
+- If a tick overruns (`dt_actual > dt_target + jitter_budget`), the runtime logs
+  a timing warning. After `max_overruns_before_fault` consecutive overruns, the
+  runtime transitions to **Degraded**.
+- Actuator commands are applied synchronously. If the actuator queue is
+  asynchronous, the adapter must guarantee ordering and provide a completion
+  callback for diagnostics.
+
+## Diagnostics format
+
+- **Run log** (`run.log`): newline-delimited JSON. Each entry contains
+  `{timestamp, feature_packet, torque_command_raw, torque_command_safe, safety_events, scheduler}`.
+- **Sensors**: one file per sensor under `diagnostics/sensors/<name>.jsonl`
+  capturing `{timestamp, hz_estimate, stale_samples, defaults_applied}` and any
+  driver-specific metrics.
+- **Actuators**: `diagnostics/actuators/<name>.jsonl` with clamp counts,
+  commanded torques, and hardware faults.
+- **Scheduler**: `diagnostics/scheduler/loop_metrics.jsonl` summarising dt
+  history, compute durations, and overrun flags.
+- **Safety**: `diagnostics/safety/events.jsonl` listing clamp actions, limit
+  strategy results, and state transitions.
+
+All artefacts share a common schema version stamped in the header so downstream
+tools can evolve alongside the runtime.
+
+## Failure and retry policy
+
+- **Sensor stale data**: Respect per-sensor `fault_strategy`.
+  - `raise`: bubble `SensorStaleDataError`, runtime enters **Faulted**.
+  - `warn`: log, substitute defaults, remain in current state.
+  - `fallback`: switch to synthetic sample (held last good value or zero) and
+    enter **Degraded** until fresh data returns.
+- **Derived signal failure**: if a resolver cannot compute a signal (missing
+  dependency), treat as sensor stale. Derived failures are attributed to the
+  originating modality for diagnostics.
+- **Controller exceptions**: transition to **Faulted**, zero actuator, flush
+  logs, and rethrow unless `controller.retry_on_failure` is enabled (bounded
+  retries with exponential backoff).
+- **Actuator errors**: first failure triggers **Degraded**; actuators must
+  report `recoverable` vs `fatal`. Fatal errors move to **Faulted** immediately.
+- **Configuration mismatches**: detected during `build_plan()` and abort before
+  initialisation.
 
 ## Sequence
 
@@ -93,6 +229,7 @@ sequenceDiagram
     participant Driver
     participant Controller
     participant Safety as SafetyManager
+    participant Diagnostics as DiagnosticsSink
     participant Actuator
 
     Runtime->>Config: load("hardware_config.yaml")
@@ -107,6 +244,7 @@ sequenceDiagram
     end
     SensorType-->>Wrangler: capability + readiness report
     Wrangler-->>Runtime: feature_plan, feature_buffer
+    Runtime->>Diagnostics: configure(log_root)
     Runtime->>Safety: configure(limits, defaults)
     Runtime->>Actuator: start()
     Runtime->>SensorType: start() (zero and stream)
@@ -133,16 +271,18 @@ sequenceDiagram
     participant Controller
     participant Safety as SafetyManager
     participant Actuator
+    participant Diagnostics as DiagnosticsSink
 
     Scheduler->>Runtime: tick(start_time)
     Runtime->>Wrangler: get_packet()
     Wrangler->>SensorType: fetch(required signals)
     SensorType-->>Wrangler: canonical sample
     Wrangler-->>Runtime: feature vector
-    Runtime->>Controller: tick(features)
+    Runtime->>Controller: compute_torque(features)
     Controller-->>Runtime: TorqueCommand
     Runtime->>Safety: enforce(TorqueCommand)
     Safety-->>Runtime: SafeTorqueCommand
+    Runtime->>Diagnostics: log_tick(features, TorqueCommand, SafeTorqueCommand)
     Runtime->>Actuator: apply(SafeTorqueCommand)
     Runtime->>Scheduler: report(dt_actual, compute_time)
     Scheduler-->>Scheduler: record diagnostics
@@ -152,7 +292,8 @@ sequenceDiagram
     end
 ```
 
-The runtime records per-tick timing and safety events. Actuators are allowed to
+The runtime records per-tick timing, the full feature packet, and torque
+commands both before and after safety enforcement. Actuators are allowed to
 raise hardware faults after a command is applied; the runtime catches them and
 decides whether to stop the loop or continue in a degraded mode depending on the
 profile fault strategy.
@@ -409,24 +550,36 @@ diagnostics:
 
 ### Calibration, diagnostics, and artefacts
 
-- Calibration routines run immediately after sensors start. Sensors that expose
-  `zero()` opt into a pre-loop calibration hook.
+- Calibration routines run immediately after sensors start while the runtime is
+  in the **Calibration** state. Sensors that expose `zero()` opt into the hook;
+  retry counts and failure handling are governed by `calibration.*` defaults.
 - Diagnostics write into `diagnostics/<category>/` under the configured log
-  root. Sensors record sampling statistics, actuators record faults and clamp
-  counts, and the scheduler records dt history plus controller compute times.
-- Each runtime session emits a `run.log` file containing time-aligned sensor
-  packets, commanded torques, and safety events.
+  root using newline-delimited JSON (`*.jsonl`). Categories mirror the
+  Diagnostics format section above so tooling can rely on consistent schema
+  versions.
+- Each runtime session emits a `run.log` file (also JSONL) containing
+  time-aligned feature packets, commanded torques, scheduler jitter, and
+  safety-state transitions.
 
 ### Extensibility checklist
 
 To add a new modality or actuator:
 
-1. Implement the abstract methods shown in the UML diagrams.
-2. Register any new canonical signals with documentation.
-3. Add driver entries under `drivers` and expose them through `sensor_types`.
-4. Declare derived signal resolvers if the modality synthesises new channels.
+1. Implement the abstract methods shown in the UML diagrams and honour the
+   component contracts described above.
+2. Register any new canonical signals with documentation and defaults.
+3. Add driver entries under `drivers` and expose them through `sensor_types`,
+   including capability probes and diagnostics exports.
+4. Declare derived signal resolvers if the modality synthesises new channels and
+   document their failure behaviour.
 5. Extend `hardware_config.yaml` to map controller schema channels to the new
-   providers.
+   providers and update `FeaturePlan` validation tests.
+6. Provide calibration hooks or defaults so the **Calibration** state can
+   execute cleanly.
+7. Emit diagnostics in the documented JSONL format and bump schema versions when
+   fields change.
+8. Update the failure policy documentation or defaults if the new component
+   introduces non-standard retry logic.
 
 With those pieces in place, the RuntimeLoop can swap components by loading a
 different profile without requiring code changes.
