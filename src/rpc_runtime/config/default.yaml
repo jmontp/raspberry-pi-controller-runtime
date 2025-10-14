@@ -10,6 +10,66 @@ profile:
       binding: mock_grf
       required: false
 
+#
+# Operator-facing Signals table (non-breaking addition)
+# ---------------------------------------------------
+# This section enumerates all controller-relevant signals and how they resolve
+# to hardware or derived values. The runtime currently consumes the legacy
+# 'schemas' section below; this table is provided for operators and future
+# loaders. Unknown keys are ignored by the current loader, so tests continue to
+# pass while we migrate tooling.
+#
+signals:
+  # Inputs (resolved from hardware or derived)
+  knee_angle:
+    role: input
+    source: hardware
+    sensor: imu
+    channel: knee_angle
+    required: true
+  knee_velocity:
+    role: input
+    source: hardware
+    sensor: imu
+    channel: knee_velocity
+    required: true
+  ankle_angle:
+    role: input
+    source: hardware
+    sensor: imu
+    channel: ankle_angle
+    required: true
+  ankle_velocity:
+    role: input
+    source: hardware
+    sensor: imu
+    channel: ankle_velocity
+    required: true
+  grf_total:
+    role: input
+    source: hardware
+    sensor: vertical_grf
+    channel: grf_total
+    required: false
+    default: 0.0
+
+  # Outputs (consumed by the actuator)
+  knee_torque:
+    role: output
+    target: actuator
+    joint: knee
+  ankle_torque:
+    role: output
+    target: actuator
+    joint: ankle
+
+# Fixed IO order used by buffer alignment (matches schemas below)
+io:
+  inputs:
+    order: [knee_angle, knee_velocity, ankle_angle, ankle_velocity, grf_total]
+  outputs:
+    order: [knee_torque, ankle_torque]
+
 schemas:
   pi_inputs:
     description: "Two-joint controller inputs aligned with training feature order."

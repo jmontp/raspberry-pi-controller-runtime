@@ -74,6 +74,44 @@ signal names. The current catalogue includes:
 When you introduce a new signal, add it to `CANONICAL_SIGNAL_REGISTRY` so it can
 inherit defaults and documentation across profiles.
 
+## Signals table (operator-facing)
+
+To simplify operator edits, profiles may include a top-level `signals:` mapping
+that declares how each input or output resolves to hardware or a derived value.
+This does not replace `schemas` yet; it complements them and can be used by
+tools to auto-generate the controller input/output order.
+
+Example (also see `src/rpc_runtime/config/profiles/mock_signals.yaml`):
+
+```yaml
+signals:
+  knee_angle:    { role: input,  source: hardware, sensor: imu,          channel: knee_angle,    required: true }
+  knee_velocity: { role: input,  source: hardware, sensor: imu,          channel: knee_velocity, required: true }
+  ankle_angle:   { role: input,  source: hardware, sensor: imu,          channel: ankle_angle,   required: true }
+  ankle_velocity:{ role: input,  source: hardware, sensor: imu,          channel: ankle_velocity,required: true }
+  grf_total:     { role: input,  source: hardware, sensor: vertical_grf, channel: grf_total,     required: false, default: 0.0 }
+  knee_torque:   { role: output, target: actuator, joint: knee }
+  ankle_torque:  { role: output, target: actuator, joint: ankle }
+
+io:
+  inputs:
+    order: [knee_angle, knee_velocity, ankle_angle, ankle_velocity, grf_total]
+  outputs:
+    order: [knee_torque, ankle_torque]
+```
+
+Notes:
+- `role` distinguishes controller inputs vs outputs.
+- `source` is `hardware` (with `sensor` and `channel`) or `derived` (future extension).
+- `io.inputs.order` and `io.outputs.order` define the fixed buffer order used by
+  the controller. Current code still reads `schemas` for ordering; tools can
+  verify `schemas.*.channels` matches this order.
+
+Two ready-to-use example profiles with a `signals` table are provided under
+`src/rpc_runtime/config/profiles/`:
+- `mock_signals.yaml` — fully mock sensors/actuator
+- `microstrain_gx5_signals.yaml` — MicroStrain IMU + mock GRF and actuator
+
 ## Hardware naming
 
 Use descriptive, lowercase identifiers that encode the device and placement, for
