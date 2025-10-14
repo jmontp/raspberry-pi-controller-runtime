@@ -49,61 +49,39 @@ flowchart TD
 ### Layered responsibilities
 
 - **Configuration loader** parses the profile YAML, validates canonical signal
-  names, and reads a single operator-facing `signals` table that declares how
-  each controller input/output is resolved. It also reads `io.inputs.order` and
-  `io.outputs.order` which define the fixed buffer ordering expected by the
-  controller. This information seeds the DataWrangler plan.
-- **DataWrangler plan** assigns each required signal to a concrete sensor type,
-  computes derived feature dependencies, and allocates a reusable feature buffer
-  following the configured IO ordering (`io.inputs.order`).
+  names, and reads two lists — `input_signals` and `output_signals` — which
+  define the fixed buffer ordering expected by the controller. This information
+  seeds the DataWrangler plan.
+- **DataWrangler plan** assigns each required input signal to a concrete sensor
+  modality, computes derived feature dependencies, and allocates a reusable
+  feature buffer following the configured `input_signals` order.
 - **Runtime loop** repeatedly asks the DataWrangler for the next feature packet,
   computes torque commands, enforces safety limits, logs the features/torques,
   and issues actuator commands while the scheduler holds the desired loop period.
 - **Diagnostics sink** receives run artefacts (merged logs, sensor timing,
   safety events) so field deployments can be audited after the fact.
 
-### Signals table (inputs/outputs)
+### Input/Output signals
 
-To keep operator edits simple and make hardware swaps easy, the profile exposes
-one `signals` table that describes both controller inputs and outputs, plus a
-compact IO ordering block. The runtime uses this to build/validate the plan and
-allocate the fixed-order feature buffer.
-
-Example:
+To keep operator edits minimal, the profile declares just two ordered lists. The
+order of each list directly defines buffer indices for inputs and outputs:
 
 ```yaml
-signals:
-  # Inputs from hardware (or derived)
-  knee_angle:    { role: input,  source: hardware, sensor: imu,          channel: knee_angle,    required: true }
-  knee_velocity: { role: input,  source: hardware, sensor: imu,          channel: knee_velocity, required: true }
-  ankle_angle:   { role: input,  source: hardware, sensor: imu,          channel: ankle_angle,   required: true }
-  ankle_velocity:{ role: input,  source: hardware, sensor: imu,          channel: ankle_velocity,required: true }
-  grf_total:     { role: input,  source: hardware, sensor: vertical_grf, channel: grf_total,     required: false, default: 0.0 }
-
-  # Outputs to the actuator
-  knee_torque:   { role: output, target: actuator, joint: knee }
-  ankle_torque:  { role: output, target: actuator, joint: ankle }
-
-io:
-  inputs:
-    order: [knee_angle, knee_velocity, ankle_angle, ankle_velocity, grf_total]
-  outputs:
-    order: [knee_torque, ankle_torque]
+input_signals:  [knee_angle, knee_velocity, ankle_angle, ankle_velocity, grf_total]
+output_signals: [knee_torque, ankle_torque]
 ```
 
 Notes:
-- `role` distinguishes controller inputs vs outputs.
-- `source` is `hardware` (with `sensor` and `channel` fields) or `derived`
-  (future extension referencing a resolver).
-- `order` arrays define the fixed indices for the feature and output buffers.
-- Multiple hardware profiles can exist; swapping setups is a matter of picking a
-  different profile with the same `io` order but different sensor bindings.
+- These lists are canonical names only. No drivers, sensor types, defaults, or
+  actuator targets appear here.
+- Hardware mapping and any derived feature logic are internal to the runtime’s
+  plan; operators only maintain the signal names and their order.
 
 ### End-to-end data flow
 
 ```mermaid
 flowchart TD
-    plan -->|modality specs| sensors["Sensor types + drivers"]
+    plan -->|modality specs| sensors["Sensors"]
     plan -->|feature order| buffer["Feature buffer (controller order)"]
     sensors -->|canonical samples| buffer
     buffer -->|feature packet| controller["Torque computation"]
@@ -148,12 +126,11 @@ once the loop begins so `get_packet()` can operate lock-free.
 ### Controller contract
 
 - Controllers consume a fixed-order feature buffer whose indices are defined by
-  `io.inputs.order`. Outputs are produced in the order defined by
-  `io.outputs.order`. The controller may validate this order at start, but does
-  not need to expose its own lists when the profile provides `io`.
-- Controllers receive a `FeatureView` (mapping-like object) from the wrangler.
-  They must not mutate it. Optional channels are guaranteed to exist with a
-  default value.
+  the `input_signals` list. Outputs are produced in the order defined by the
+  `output_signals` list. The controller may validate this order at start, but
+  does not need to expose its own lists when the profile provides them.
+- Controllers receive a `FeatureView` (mapping-like object) from the wrangler
+  and must not mutate it.
 - Controllers propagate `ControllerFault` exceptions when they cannot produce a
   torque command (e.g., model runtime error). The runtime catches these and
   transitions into a degraded or fault state depending on `fault_strategy`.
@@ -164,8 +141,8 @@ once the loop begins so `get_packet()` can operate lock-free.
   diagnostics, but only the wrangler writes into it.
 - Buffer indices are stable across the session; derived feature resolvers write
   directly to their assigned slots.
-- Each tick, the wrangler marks optional channels that were defaulted so the
-  diagnostics sink can record coverage (e.g., missing GRF sensor).
+- Each tick, the wrangler records presence/absence of optional channels so the
+  diagnostics sink can report coverage (e.g., missing GRF sensor).
 
 ### Diagnostics sink contract
 
