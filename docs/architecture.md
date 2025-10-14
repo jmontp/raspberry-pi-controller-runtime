@@ -48,16 +48,56 @@ flowchart TD
 
 ### Layered responsibilities
 
-- **Configuration loader** parses `hardware_config.yaml`, validates canonical
-  signal names, and hands the DataWrangler enough metadata to build a plan.
+- **Configuration loader** parses the profile YAML, validates canonical signal
+  names, and reads a single operator-facing `signals` table that declares how
+  each controller input/output is resolved. It also reads `io.inputs.order` and
+  `io.outputs.order` which define the fixed buffer ordering expected by the
+  controller. This information seeds the DataWrangler plan.
 - **DataWrangler plan** assigns each required signal to a concrete sensor type,
   computes derived feature dependencies, and allocates a reusable feature buffer
-  mirroring the controller-provided ordering.
+  following the configured IO ordering (`io.inputs.order`).
 - **Runtime loop** repeatedly asks the DataWrangler for the next feature packet,
   computes torque commands, enforces safety limits, logs the features/torques,
   and issues actuator commands while the scheduler holds the desired loop period.
 - **Diagnostics sink** receives run artefacts (merged logs, sensor timing,
   safety events) so field deployments can be audited after the fact.
+
+### Signals table (inputs/outputs)
+
+To keep operator edits simple and make hardware swaps easy, the profile exposes
+one `signals` table that describes both controller inputs and outputs, plus a
+compact IO ordering block. The runtime uses this to build/validate the plan and
+allocate the fixed-order feature buffer.
+
+Example:
+
+```yaml
+signals:
+  # Inputs from hardware (or derived)
+  knee_angle:    { role: input,  source: hardware, sensor: imu,          channel: knee_angle,    required: true }
+  knee_velocity: { role: input,  source: hardware, sensor: imu,          channel: knee_velocity, required: true }
+  ankle_angle:   { role: input,  source: hardware, sensor: imu,          channel: ankle_angle,   required: true }
+  ankle_velocity:{ role: input,  source: hardware, sensor: imu,          channel: ankle_velocity,required: true }
+  grf_total:     { role: input,  source: hardware, sensor: vertical_grf, channel: grf_total,     required: false, default: 0.0 }
+
+  # Outputs to the actuator
+  knee_torque:   { role: output, target: actuator, joint: knee }
+  ankle_torque:  { role: output, target: actuator, joint: ankle }
+
+io:
+  inputs:
+    order: [knee_angle, knee_velocity, ankle_angle, ankle_velocity, grf_total]
+  outputs:
+    order: [knee_torque, ankle_torque]
+```
+
+Notes:
+- `role` distinguishes controller inputs vs outputs.
+- `source` is `hardware` (with `sensor` and `channel` fields) or `derived`
+  (future extension referencing a resolver).
+- `order` arrays define the fixed indices for the feature and output buffers.
+- Multiple hardware profiles can exist; swapping setups is a matter of picking a
+  different profile with the same `io` order but different sensor bindings.
 
 ### End-to-end data flow
 
@@ -107,8 +147,10 @@ once the loop begins so `get_packet()` can operate lock-free.
 
 ### Controller contract
 
-- Controllers expose `expected_inputs` and `expected_outputs` as ordered lists
-  so the wrangler can align the feature buffer exactly as requested.
+- Controllers consume a fixed-order feature buffer whose indices are defined by
+  `io.inputs.order`. Outputs are produced in the order defined by
+  `io.outputs.order`. The controller may validate this order at start, but does
+  not need to expose its own lists when the profile provides `io`.
 - Controllers receive a `FeatureView` (mapping-like object) from the wrangler.
   They must not mutate it. Optional channels are guaranteed to exist with a
   default value.
