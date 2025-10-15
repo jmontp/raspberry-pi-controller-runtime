@@ -83,9 +83,14 @@ class DataWrangler:
         self._diagnostics = diagnostics_sink
         # Validate immediately that the configured hardware can, in principle,
         # provide required signals.
-        available = {"knee_angle", "knee_velocity", "ankle_angle", "ankle_velocity"}
+        available = {
+            "knee_flexion_angle_ipsi_rad",
+            "knee_flexion_velocity_ipsi_rad_s",
+            "ankle_dorsiflexion_angle_ipsi_rad",
+            "ankle_dorsiflexion_velocity_ipsi_rad_s",
+        }
         if vertical_grf is not None:
-            available.add("grf_total")
+            available.add("vertical_grf_ipsi_N")
         # Allow the schema to raise a meaningful error if required channels
         # cannot be satisfied.
         self._schema.validate_signals(available)
@@ -204,16 +209,7 @@ class InputSchema:
 # Canonical signal resolvers
 # ---------------------------------------------------------------------------
 
-JOINT_INDEX: dict[str, int] = {
-    "knee": 0,
-    "ankle": 1,
-}
-
-
-def _resolve_joint_signal(inputs: ControlInputs, joint: str, attribute: str) -> float | None:
-    index = JOINT_INDEX.get(joint)
-    if index is None:
-        return None
+def _resolve_joint_signal(inputs: ControlInputs, index: int, attribute: str) -> float | None:
     if attribute == "angle":
         try:
             return float(inputs.imu.joint_angles_rad[index])
@@ -242,9 +238,13 @@ def _resolve_unknown(inputs: ControlInputs) -> float | None:  # pragma: no cover
 
 
 SIGNAL_RESOLVERS: dict[str, Callable[[ControlInputs], float | None]] = {
-    "knee_angle": lambda inputs: _resolve_joint_signal(inputs, "knee", "angle"),
-    "knee_velocity": lambda inputs: _resolve_joint_signal(inputs, "knee", "velocity"),
-    "ankle_angle": lambda inputs: _resolve_joint_signal(inputs, "ankle", "angle"),
-    "ankle_velocity": lambda inputs: _resolve_joint_signal(inputs, "ankle", "velocity"),
-    "grf_total": lambda inputs: _resolve_grf_signal(inputs, 0),
+    "knee_flexion_angle_ipsi_rad": lambda inputs: _resolve_joint_signal(inputs, 0, "angle"),
+    "knee_flexion_velocity_ipsi_rad_s": lambda inputs: _resolve_joint_signal(
+        inputs, 0, "velocity"
+    ),
+    "ankle_dorsiflexion_angle_ipsi_rad": lambda inputs: _resolve_joint_signal(inputs, 1, "angle"),
+    "ankle_dorsiflexion_velocity_ipsi_rad_s": lambda inputs: _resolve_joint_signal(
+        inputs, 1, "velocity"
+    ),
+    "vertical_grf_ipsi_N": lambda inputs: _resolve_grf_signal(inputs, 0),
 }

@@ -128,54 +128,185 @@ def load_runtime_profile(path: str | Path) -> RuntimeProfile:
 
     profile_section = _require_mapping(raw.get("profile"), "profile")
 
-    schemas = _parse_schemas(raw.get("schemas", {}))
-    controllers = _parse_controllers(raw.get("controllers", {}), schemas)
-    sensors = _parse_sensors(raw.get("sensors", {}))
-    actuators = _parse_actuators(raw.get("actuators", {}))
-
     profile_name = str(profile_section.get("name", profile_path.stem))
+    profile = _load_structured_profile(raw, profile_section, profile_name)
+    profile.validate()
+    return profile
+
+
+# ---------------------------------------------------------------------------
+# Profile parsing helpers
+# ---------------------------------------------------------------------------
+
+
+def _load_structured_profile(
+    raw: Mapping[str, Any],
+    profile_section: Mapping[str, Any],
+    profile_name: str,
+) -> RuntimeProfile:
+    """Load profiles that follow the documented input/output/hardware layout."""
+    hardware_section = _require_mapping(raw.get("hardware"), "hardware")
+    hardware_sensors = _require_mapping(hardware_section.get("sensors"), "hardware['sensors']")
+    hardware_actuators = _require_mapping(
+        hardware_section.get("actuators"), "hardware['actuators']"
+    )
+
+    input_signals_raw = raw.get("input_signals")
+    if not isinstance(input_signals_raw, list) or not input_signals_raw:
+        raise ValueError("Profile YAML must define a non-empty 'input_signals' list")
+
+    sensor_signal_map: dict[str, list[str]] = {str(name): [] for name in hardware_sensors}
+    sensor_required_map: dict[str, bool] = {str(name): False for name in hardware_sensors}
+    input_schema_signals: list[SchemaSignal] = []
+    for idx, entry in enumerate(input_signals_raw):
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"'input_signals' entry #{idx} must be a mapping")
+        signal_name = entry.get("name") or entry.get("signal")
+        hardware_alias = entry.get("hardware")
+        if signal_name is None:
+            raise ValueError(f"'input_signals' entry #{idx} missing 'name'")
+        if hardware_alias is None:
+            raise ValueError(f"'input_signals' entry #{idx} missing 'hardware'")
+        hardware_alias = str(hardware_alias)
+        if hardware_alias not in sensor_signal_map:
+            raise ValueError(
+                f"'input_signals' entry #{idx} references unknown sensor alias '{hardware_alias}'"
+            )
+        required = bool(entry.get("required", True))
+        default_value = entry.get("default", 0.0)
+        if default_value is None:
+            default_value = 0.0
+        try:
+            default_numeric = float(default_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"'input_signals' entry '{signal_name}' has invalid default '{default_value}'"
+            ) from exc
+        input_schema_signals.append(
+            SchemaSignal(
+                name=str(signal_name),
+                required=required,
+                default=default_numeric,
+            )
+        )
+        sensor_signal_map[hardware_alias].append(str(signal_name))
+        if required:
+            sensor_required_map[hardware_alias] = True
+
+    input_schema_name = f"{profile_name}_inputs"
+    input_schema = InputSchema(name=input_schema_name, signals=tuple(input_schema_signals))
+
+    output_signals_raw = raw.get("output_signals")
+    if not isinstance(output_signals_raw, list) or not output_signals_raw:
+        raise ValueError("Profile YAML must define a non-empty 'output_signals' list")
+    actuator_signal_map: dict[str, list[str]] = {str(name): [] for name in hardware_actuators}
+    output_schema_signals: list[SchemaSignal] = []
+    for idx, entry in enumerate(output_signals_raw):
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"'output_signals' entry #{idx} must be a mapping")
+        signal_name = entry.get("name") or entry.get("signal")
+        hardware_alias = entry.get("hardware")
+        if signal_name is None:
+            raise ValueError(f"'output_signals' entry #{idx} missing 'name'")
+        if hardware_alias is None:
+            raise ValueError(f"'output_signals' entry #{idx} missing 'hardware'")
+        hardware_alias = str(hardware_alias)
+        if hardware_alias not in actuator_signal_map:
+            raise ValueError(
+                f"'output_signals' entry #{idx} references unknown actuator alias '{hardware_alias}'"
+            )
+        output_schema_signals.append(SchemaSignal(name=str(signal_name), required=True))
+        actuator_signal_map[hardware_alias].append(str(signal_name))
+
+    output_schema_name = f"{profile_name}_outputs"
+    output_schema = InputSchema(name=output_schema_name, signals=tuple(output_schema_signals))
+
+    schemas: dict[str, InputSchema] = {
+        input_schema_name: input_schema,
+        output_schema_name: output_schema,
+    }
+    controllers = _parse_controllers(
+        raw.get("controllers", {}),
+        schemas,
+        default_input_schema=input_schema_name,
+        default_output_schema=output_schema_name,
+    )
+
     controller_key = profile_section.get("controller")
     if controller_key not in controllers:
         raise ValueError(f"Unknown controller bundle '{controller_key}' referenced by profile")
     controller_bundle = controllers[str(controller_key)]
 
-    actuator_key = profile_section.get("actuator")
-    if actuator_key not in actuators:
-        raise ValueError(f"Unknown actuator binding '{actuator_key}' referenced by profile")
-    actuator_binding = actuators[str(actuator_key)]
+    used_sensor_aliases = [alias for alias, signals in sensor_signal_map.items() if signals]
+    if not used_sensor_aliases:
+        raise ValueError("No sensors referenced by 'input_signals'")
 
-    sensor_entries = profile_section.get("sensors", [])
-    if not isinstance(sensor_entries, list):
-        raise ValueError("'sensors' entry in profile must be a list")
     sensor_bindings: list[SensorBinding] = []
-    for entry in sensor_entries:
-        if not isinstance(entry, Mapping):
-            raise ValueError("Sensor entry must be a mapping with 'name' and 'binding'")
-        logical_name = entry.get("name")
-        binding_key = entry.get("binding", logical_name)
-        if logical_name is None:
-            raise ValueError("Sensor entry missing 'name'")
-        if binding_key not in sensors:
-            raise ValueError(f"Sensor binding '{binding_key}' not defined")
-        template = sensors[str(binding_key)]
+    for alias in used_sensor_aliases:
+        payload = _require_mapping(
+            hardware_sensors.get(alias), f"hardware['sensors']['{alias}']"
+        )
+        driver = payload.get("class") or payload.get("driver")
+        if driver is None:
+            raise ValueError(f"Sensor '{alias}' missing 'class' entry")
+        config_payload = payload.get("config", {})
+        if config_payload is None:
+            config_payload = {}
+        if not isinstance(config_payload, Mapping):
+            raise ValueError(f"Sensor '{alias}' config must be a mapping")
+        config: dict[str, Any] = dict(config_payload)
+        for key, value in payload.items():
+            if key in {"class", "driver", "config"}:
+                continue
+            config[key] = value
+        provides = tuple(sensor_signal_map[alias])
+        if not provides:
+            raise ValueError(f"Sensor '{alias}' does not provide any signals")
         sensor_bindings.append(
             SensorBinding(
-                name=str(logical_name),
-                driver=template.driver,
-                provides=template.provides,
-                config=dict(template.config),
-                required=bool(entry.get("required", template.required)),
+                name=str(alias),
+                driver=str(driver),
+                provides=provides,
+                config=config,
+                required=sensor_required_map.get(alias, True),
             )
         )
 
-    profile = RuntimeProfile(
+    used_actuator_aliases = [alias for alias, signals in actuator_signal_map.items() if signals]
+    if not used_actuator_aliases:
+        raise ValueError("No actuators referenced by 'output_signals'")
+    if len(set(used_actuator_aliases)) != 1:
+        raise NotImplementedError(
+            "Multiple actuator aliases referenced; the minimal runtime supports a single actuator"
+        )
+    actuator_alias = used_actuator_aliases[0]
+    actuator_payload = _require_mapping(
+        hardware_actuators.get(actuator_alias), f"hardware['actuators']['{actuator_alias}']"
+    )
+    actuator_driver = actuator_payload.get("class") or actuator_payload.get("driver")
+    if actuator_driver is None:
+        raise ValueError(f"Actuator '{actuator_alias}' missing 'class' entry")
+    actuator_config_payload = actuator_payload.get("config", {})
+    if actuator_config_payload is None:
+        actuator_config_payload = {}
+    if not isinstance(actuator_config_payload, Mapping):
+        raise ValueError(f"Actuator '{actuator_alias}' config must be a mapping")
+    actuator_config: dict[str, Any] = dict(actuator_config_payload)
+    for key, value in actuator_payload.items():
+        if key in {"class", "driver", "config"}:
+            continue
+        actuator_config[key] = value
+    actuator_binding = ActuatorBinding(
+        driver=str(actuator_driver),
+        config=actuator_config,
+    )
+
+    return RuntimeProfile(
         name=profile_name,
         sensors=tuple(sensor_bindings),
         actuator=actuator_binding,
         controller=controller_bundle,
     )
-    profile.validate()
-    return profile
 
 
 # ---------------------------------------------------------------------------
@@ -236,42 +367,12 @@ def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:
     return value
 
 
-def _parse_schemas(raw: Mapping[str, Any]) -> dict[str, InputSchema]:
-    schemas: dict[str, InputSchema] = {}
-    for name, payload in raw.items():
-        mapping = _require_mapping(payload, f"schemas['{name}']")
-        channels_payload = mapping.get("channels", [])
-        if not isinstance(channels_payload, list) or not channels_payload:
-            raise ValueError(f"Schema '{name}' must define a non-empty 'channels' list")
-        channels: list[SchemaSignal] = []
-        for idx, definition in enumerate(channels_payload):
-            if isinstance(definition, str):
-                channels.append(SchemaSignal(name=str(definition)))
-                continue
-            if not isinstance(definition, Mapping):
-                raise ValueError(f"Schema '{name}' channel #{idx} must be a mapping or string")
-            signal_name = definition.get("signal", definition.get("name"))
-            if not signal_name:
-                raise ValueError(f"Schema '{name}' channel #{idx} missing 'signal'")
-            default = definition.get("default")
-            channels.append(
-                SchemaSignal(
-                    name=str(signal_name),
-                    required=bool(definition.get("required", True)),
-                    default=float(default) if default is not None else 0.0,
-                )
-            )
-        schemas[str(name)] = InputSchema(
-            name=str(name),
-            signals=tuple(channels),
-            description=(mapping.get("description") or None),
-        )
-    return schemas
-
-
 def _parse_controllers(
     raw: Mapping[str, Any],
     schemas: Mapping[str, InputSchema],
+    *,
+    default_input_schema: str | None = None,
+    default_output_schema: str | None = None,
 ) -> dict[str, ControllerBundle]:
     controllers: dict[str, ControllerBundle] = {}
     for name, payload in raw.items():
@@ -280,13 +381,28 @@ def _parse_controllers(
         if implementation is None:
             raise ValueError(f"Controller '{name}' missing 'implementation'")
         input_schema_name = mapping.get("input_schema", mapping.get("schema"))
-        if input_schema_name not in schemas:
-            raise ValueError(
-                f"Controller '{name}' references unknown input schema '{input_schema_name}'"
-            )
+        if input_schema_name is None:
+            if default_input_schema is None:
+                raise ValueError(
+                    f"Controller '{name}' missing 'input_schema' and no default schema available"
+                )
+            if default_input_schema not in schemas:
+                raise ValueError(
+                    f"Default input schema '{default_input_schema}' not defined for controller '{name}'"
+                )
+            input_schema = schemas[str(default_input_schema)]
+        else:
+            if input_schema_name not in schemas:
+                raise ValueError(
+                    f"Controller '{name}' references unknown input schema '{input_schema_name}'"
+                )
+            input_schema = schemas[str(input_schema_name)]
         output_schema_name = mapping.get("output_schema")
         output_schema = None
-        if output_schema_name is not None:
+        if output_schema_name is None:
+            if default_output_schema is not None and default_output_schema in schemas:
+                output_schema = schemas[str(default_output_schema)]
+        else:
             if output_schema_name not in schemas:
                 raise ValueError(
                     f"Controller '{name}' references unknown output schema '{output_schema_name}'"
@@ -297,7 +413,7 @@ def _parse_controllers(
             raise ValueError(f"Controller '{name}' must define non-empty 'joints'")
         manifest = ControllerManifest(
             name=str(name),
-            input_schema=schemas[str(input_schema_name)],
+            input_schema=input_schema,
             output_schema=output_schema,
             joints=tuple(str(joint) for joint in joints),
             description=(mapping.get("description") or None),
@@ -316,46 +432,6 @@ def _parse_controllers(
             torque_model=dict(torque_model_payload) if torque_model_payload else None,
         )
     return controllers
-
-
-def _parse_sensors(raw: Mapping[str, Any]) -> dict[str, SensorBinding]:
-    sensors: dict[str, SensorBinding] = {}
-    for name, payload in raw.items():
-        mapping = _require_mapping(payload, f"sensors['{name}']")
-        driver = mapping.get("driver")
-        if driver is None:
-            raise ValueError(f"Sensor '{name}' missing 'driver'")
-        provides = mapping.get("provides", [])
-        if not isinstance(provides, list) or not provides:
-            raise ValueError(f"Sensor '{name}' must define a non-empty 'provides' list")
-        config_payload = mapping.get("config", {})
-        if not isinstance(config_payload, Mapping):
-            raise ValueError(f"Sensor '{name}' config must be a mapping")
-        sensors[str(name)] = SensorBinding(
-            name=str(name),
-            driver=str(driver),
-            provides=tuple(str(signal) for signal in provides),
-            config=dict(config_payload),
-            required=bool(mapping.get("required", True)),
-        )
-    return sensors
-
-
-def _parse_actuators(raw: Mapping[str, Any]) -> dict[str, ActuatorBinding]:
-    actuators: dict[str, ActuatorBinding] = {}
-    for name, payload in raw.items():
-        mapping = _require_mapping(payload, f"actuators['{name}']")
-        driver = mapping.get("driver")
-        if driver is None:
-            raise ValueError(f"Actuator '{name}' missing 'driver'")
-        config_payload = mapping.get("config", {})
-        if not isinstance(config_payload, Mapping):
-            raise ValueError(f"Actuator '{name}' config must be a mapping")
-        actuators[str(name)] = ActuatorBinding(
-            driver=str(driver),
-            config=dict(config_payload),
-        )
-    return actuators
 
 
 def _build_controller(bundle: ControllerBundle) -> tuple[PIController, TorqueModel]:

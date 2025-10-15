@@ -1,32 +1,36 @@
 profile:
   name: mock_pi_default
   controller: pi_mock
-  actuator: mock_actuator
-  sensors:
-    - name: imu
-      binding: mock_imu
-    - name: vertical_grf
-      binding: mock_grf
-      required: false
 
-schemas:
-  pi_inputs:
-    channels:
-      - knee_angle
-      - knee_velocity
-      - ankle_angle
-      - ankle_velocity
-      - { signal: grf_total, required: false, default: 0.0 }
-  pi_outputs:
-    channels:
-      - knee_torque
-      - ankle_torque
+# Canonical signal ordering for the runtime buffers
+input_signals:
+  - { name: knee_flexion_angle_ipsi_rad, hardware: imu }
+  - { name: knee_flexion_velocity_ipsi_rad_s, hardware: imu }
+  - { name: ankle_dorsiflexion_angle_ipsi_rad, hardware: imu }
+  - { name: ankle_dorsiflexion_velocity_ipsi_rad_s, hardware: imu }
+  - { name: vertical_grf_ipsi_N, hardware: vertical_grf, required: false, default: 0.0 }
+
+output_signals:
+  - { name: knee_flexion_moment_ipsi_Nm, hardware: mock_actuator }
+  - { name: ankle_dorsiflexion_moment_ipsi_Nm, hardware: mock_actuator }
+
+hardware:
+  sensors:
+    imu:
+      class: rpc_runtime.sensors.imu.mock.MockIMU
+      config:
+        loop: true
+    vertical_grf:
+      class: rpc_runtime.sensors.grf.mock.MockVerticalGRF
+      config: {}
+  actuators:
+    mock_actuator:
+      class: rpc_runtime.actuators.mock.MockActuator
+      config: {}
 
 controllers:
   pi_mock:
     implementation: rpc_runtime.controllers.pi_controller.PIController
-    input_schema: pi_inputs
-    output_schema: pi_outputs
     joints: ["knee", "ankle"]
     description: "Mock PI controller bundle for development and testing."
     config:
@@ -46,24 +50,3 @@ controllers:
         outputs:
           knee: 0.0
           ankle: 0.0
-
-sensors:
-  mock_imu:
-    driver: rpc_runtime.sensors.imu.mock.MockIMU
-    provides:
-      - knee_angle
-      - knee_velocity
-      - ankle_angle
-      - ankle_velocity
-    config:
-      loop: true
-  mock_grf:
-    driver: rpc_runtime.sensors.grf.mock.MockVerticalGRF
-    provides:
-      - grf_total
-    config: {}
-
-actuators:
-  mock_actuator:
-    driver: rpc_runtime.actuators.mock.MockActuator
-    config: {}

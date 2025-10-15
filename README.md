@@ -43,5 +43,8 @@ The controller manifest guarantees that sensors emit a consistent feature schema
 
 Read `docs/architecture.md` for module structure and `src/rpc_runtime/config/default.yaml` for a profile example.
 
+## Canonical signal naming
+Feature IDs follow the canonical definitions in `LocoHub/src/locohub/feature_constants.py`. Profiles, runtime schemas, and tool scripts reference names such as `knee_flexion_angle_ipsi_rad` and `vertical_grf_ipsi_N`. When replaying recorded sessions (see `scripts/replay_session.py`), ensure CSV/log columns use these canonical identifiers; legacy column names like `knee_angle` are no longer accepted.
+
 ## Repository layout
 See `docs/architecture.md` for a module-level overview and `AGENTS.md` for contributor expectations.

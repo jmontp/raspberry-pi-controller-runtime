@@ -46,11 +46,11 @@ def test_controller_with_mock_devices() -> None:
     schema = InputSchema(
         name="pi_inputs",
         signals=(
-            SchemaSignal(name="knee_angle"),
-            SchemaSignal(name="knee_velocity"),
-            SchemaSignal(name="ankle_angle"),
-            SchemaSignal(name="ankle_velocity"),
-            SchemaSignal(name="grf_total", required=False, default=0.0),
+            SchemaSignal(name="knee_flexion_angle_ipsi_rad"),
+            SchemaSignal(name="knee_flexion_velocity_ipsi_rad_s"),
+            SchemaSignal(name="ankle_dorsiflexion_angle_ipsi_rad"),
+            SchemaSignal(name="ankle_dorsiflexion_velocity_ipsi_rad_s"),
+            SchemaSignal(name="vertical_grf_ipsi_N", required=False, default=0.0),
         ),
     )
     controller = PIController(

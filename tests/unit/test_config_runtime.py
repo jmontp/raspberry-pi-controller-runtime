@@ -29,14 +29,14 @@ def test_input_schema_optional_zero_fill() -> None:
     schema = InputSchema(
         name="test",
         signals=(
-            SchemaSignal(name="knee_angle", required=True),
-            SchemaSignal(name="grf_total", required=False, default=0.0),
+            SchemaSignal(name="knee_flexion_angle_ipsi_rad", required=True),
+            SchemaSignal(name="vertical_grf_ipsi_N", required=False, default=0.0),
         ),
     )
     inputs = ControlInputs(imu=_mock_imu_sample(), vertical_grf=None)
     features = schema.build_features(inputs)
-    assert features["knee_angle"] == pytest.approx(0.1)
-    assert features["grf_total"] == 0.0
+    assert features["knee_flexion_angle_ipsi_rad"] == pytest.approx(0.1)
+    assert features["vertical_grf_ipsi_N"] == 0.0
 
 
 def test_input_schema_missing_required_signal_raises() -> None:
@@ -44,8 +44,8 @@ def test_input_schema_missing_required_signal_raises() -> None:
     schema = InputSchema(
         name="test",
         signals=(
-            SchemaSignal(name="knee_angle", required=True),
-            SchemaSignal(name="grf_total", required=True),
+            SchemaSignal(name="knee_flexion_angle_ipsi_rad", required=True),
+            SchemaSignal(name="vertical_grf_ipsi_N", required=True),
         ),
     )
     inputs = ControlInputs(imu=_mock_imu_sample(), vertical_grf=None)

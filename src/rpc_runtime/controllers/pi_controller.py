@@ -66,6 +66,17 @@ class LowPassFilter:
 class PIController:
     """Composable PI controller with torque model feedforward."""
 
+    # Canonical feature names corresponding to joint measurements in LocoHub.
+    JOINT_ANGLE_FEATURES = {
+        "knee": "knee_flexion_angle_ipsi_rad",
+        "ankle": "ankle_dorsiflexion_angle_ipsi_rad",
+    }
+    JOINT_DESIRED_ANGLE_FEATURES = {
+        # Desired setpoint features, when available.
+        "knee": "knee_flexion_angle_desired_ipsi_rad",
+        "ankle": "ankle_dorsiflexion_angle_desired_ipsi_rad",
+    }
+
     def __init__(
         self,
         config: PIControllerConfig,
@@ -119,8 +130,21 @@ class PIController:
         torque_ff = self._torque_model.run(dict(feature_map))
         torques: Dict[str, float] = {}
         for joint in self._config.joints:
-            ref = features.get(f"{joint}_desired_angle", features.get(f"{joint}_angle", 0.0))
-            meas = features.get(f"{joint}_angle", 0.0)
+            angle_key = self.JOINT_ANGLE_FEATURES.get(joint, f"{joint}_angle")
+            desired_key = self.JOINT_DESIRED_ANGLE_FEATURES.get(joint, f"{joint}_desired_angle")
+            meas = float(
+                feature_map.get(
+                    angle_key,
+                    feature_map.get(f"{joint}_angle", 0.0),
+                )
+            )
+            ref = feature_map.get(desired_key)
+            if ref is None:
+                ref = feature_map.get(f"{joint}_desired_angle")
+            if ref is None:
+                ref = meas
+            else:
+                ref = float(ref)
             error = ref - meas
             integral = self._integral_error[joint] + error * self._config.dt
             self._integral_error[joint] = integral
