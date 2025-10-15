@@ -5,7 +5,7 @@ from __future__ import annotations
 import abc
 import logging
 from dataclasses import dataclass
-from typing import Dict, Tuple, cast
+from typing import Dict, Iterable, Tuple, cast
 
 from ..base import BaseSensor, BaseSensorConfig, SensorStaleDataError
 
@@ -97,6 +97,16 @@ class BaseVerticalGRF(BaseSensor):
     def read(self) -> VerticalGRFSample:
         """Return the latest vertical GRF sample."""
 
+    def read_signals(self, signals: Iterable[str]) -> tuple[VerticalGRFSample, dict[str, float]]:
+        """Return the latest sample with canonical GRF signals."""
+        sample = self.read()
+        values: dict[str, float] = {}
+        for name in signals:
+            value = self._map_signal(sample, name)
+            if value is not None:
+                values[name] = value
+        return sample, values
+
     def zero(self) -> None:
         """Optional re-zero hook."""
         return None
@@ -135,3 +145,16 @@ class BaseVerticalGRF(BaseSensor):
 
         config.channel_names = channels
         return config
+
+    def _map_signal(self, sample: VerticalGRFSample, name: str) -> float | None:
+        """Return canonical GRF signals from a sample when available."""
+        if name == "vertical_grf_ipsi_N":
+            return self._resolve_channel(sample, 0)
+        return None
+
+    def _resolve_channel(self, sample: VerticalGRFSample, index: int) -> float | None:
+        """Return a channel value by index when present."""
+        try:
+            return float(sample.forces_newton[index])
+        except (IndexError, TypeError, ValueError):
+            return None

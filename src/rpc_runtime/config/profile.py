@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping
 
@@ -16,88 +16,24 @@ from rpc_runtime.controllers.pi_controller import (
     PIControllerGains,
 )
 from rpc_runtime.controllers.torque_models.base import TorqueModel
-from rpc_runtime.runtime.wrangler import (
-    InputSchema,
-    SchemaSignal,
-)
+from rpc_runtime.runtime.wrangler import InputSchema, SchemaSignal
 from rpc_runtime.sensors.base import BaseSensor
-from rpc_runtime.sensors.grf.base import BaseVerticalGRF
-from rpc_runtime.sensors.imu.base import BaseIMU
+from .models import (
+    ActuatorBinding,
+    ControllerBundle,
+    ControllerManifest,
+    RuntimeProfile as ProfileModel,
+    SensorBinding,
+    SignalRoute,
+)
+
+RuntimeProfile = ProfileModel
 
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
-class SensorBinding:
-    """Binding between a logical sensor name and a concrete driver."""
-
-    name: str
-    driver: str
-    provides: tuple[str, ...]
-    config: dict[str, Any] = field(default_factory=dict)
-    required: bool = True
-
-    def available_signals(self) -> set[str]:
-        """Signals exposed by this sensor binding."""
-        return set(self.provides)
-
-
-@dataclass(slots=True)
-class ActuatorBinding:
-    """Driver path and config payload for the actuator stack."""
-
-    driver: str
-    config: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class ControllerManifest:
-    """Controller IO manifest describing schemas and joints."""
-
-    name: str
-    input_schema: InputSchema
-    output_schema: InputSchema | None
-    joints: tuple[str, ...]
-    description: str | None = None
-
-    def validate_hardware(self, available_signals: Iterable[str]) -> None:
-        """Ensure required signals are offered by the hardware."""
-        self.input_schema.validate_signals(available_signals)
-
-
-@dataclass(slots=True)
-class ControllerBundle:
-    """Controller implementation reference plus configuration payloads."""
-
-    name: str
-    implementation: str
-    manifest: ControllerManifest
-    config: dict[str, Any] = field(default_factory=dict)
-    torque_model: dict[str, Any] | None = None
-
-
-@dataclass(slots=True)
-class RuntimeProfile:
-    """In-memory representation of a declarative runtime profile."""
-
-    name: str
-    sensors: tuple[SensorBinding, ...]
-    actuator: ActuatorBinding
-    controller: ControllerBundle
-
-    def available_signals(self) -> set[str]:
-        """Union of signals provided by all configured sensors."""
-        signals: set[str] = set()
-        for sensor in self.sensors:
-            signals.update(sensor.available_signals())
-        return signals
-
-    def validate(self) -> None:
-        """Validate that sensors can satisfy the controller manifest."""
-        available = self.available_signals()
-        self.controller.manifest.validate_hardware(available)
 
 
 @dataclass(slots=True)
@@ -105,11 +41,9 @@ class RuntimeComponents:
     """Concrete runtime objects instantiated from a profile."""
 
     profile: RuntimeProfile
-    imu: BaseIMU
     actuator: BaseActuator
     controller: PIController
     torque_model: TorqueModel
-    vertical_grf: BaseVerticalGRF | None
     sensors: Dict[str, BaseSensor]
 
 
@@ -157,21 +91,24 @@ def _load_structured_profile(
 
     sensor_signal_map: dict[str, list[str]] = {str(name): [] for name in hardware_sensors}
     sensor_required_map: dict[str, bool] = {str(name): False for name in hardware_sensors}
+    signal_routes: list[SignalRoute] = []
     input_schema_signals: list[SchemaSignal] = []
     for idx, entry in enumerate(input_signals_raw):
         if not isinstance(entry, Mapping):
             raise ValueError(f"'input_signals' entry #{idx} must be a mapping")
         signal_name = entry.get("name") or entry.get("signal")
-        hardware_alias = entry.get("hardware")
         if signal_name is None:
             raise ValueError(f"'input_signals' entry #{idx} missing 'name'")
-        if hardware_alias is None:
-            raise ValueError(f"'input_signals' entry #{idx} missing 'hardware'")
-        hardware_alias = str(hardware_alias)
-        if hardware_alias not in sensor_signal_map:
-            raise ValueError(
-                f"'input_signals' entry #{idx} references unknown sensor alias '{hardware_alias}'"
-            )
+        hardware_alias_raw = entry.get("hardware")
+        provider: str | None
+        if hardware_alias_raw is None:
+            provider = None
+        else:
+            provider = str(hardware_alias_raw)
+            if provider not in sensor_signal_map:
+                raise ValueError(
+                    f"'input_signals' entry #{idx} references unknown sensor alias '{provider}'"
+                )
         required = bool(entry.get("required", True))
         default_value = entry.get("default", 0.0)
         if default_value is None:
@@ -189,9 +126,17 @@ def _load_structured_profile(
                 default=default_numeric,
             )
         )
-        sensor_signal_map[hardware_alias].append(str(signal_name))
-        if required:
-            sensor_required_map[hardware_alias] = True
+        signal_routes.append(
+            SignalRoute(
+                name=str(signal_name),
+                provider=provider,
+                default=default_numeric,
+            )
+        )
+        if provider is not None:
+            sensor_signal_map[provider].append(str(signal_name))
+            if required:
+                sensor_required_map[provider] = True
 
     input_schema_name = f"{profile_name}_inputs"
     input_schema = InputSchema(name=input_schema_name, signals=tuple(input_schema_signals))
@@ -306,6 +251,7 @@ def _load_structured_profile(
         sensors=tuple(sensor_bindings),
         actuator=actuator_binding,
         controller=controller_bundle,
+        signal_routes=tuple(signal_routes),
     )
 
 
@@ -326,13 +272,6 @@ def build_runtime_components(profile: RuntimeProfile) -> RuntimeComponents:
             )
         sensor_instances[binding.name] = instance
 
-    imu = _resolve_single(sensor_instances, BaseIMU, preferred_name="imu")
-    vertical_grf = _resolve_optional(
-        sensor_instances,
-        BaseVerticalGRF,
-        preferred_name="vertical_grf",
-    )
-
     actuator_cls = _import_symbol(profile.actuator.driver)
     actuator = actuator_cls(**profile.actuator.config)
     if not isinstance(actuator, BaseActuator):
@@ -342,11 +281,9 @@ def build_runtime_components(profile: RuntimeProfile) -> RuntimeComponents:
 
     return RuntimeComponents(
         profile=profile,
-        imu=imu,
         actuator=actuator,
         controller=controller,
         torque_model=torque_model,
-        vertical_grf=vertical_grf,
         sensors=sensor_instances,
     )
 
@@ -496,47 +433,3 @@ def _import_symbol(path: str):
         return getattr(module, attr)
     except AttributeError as exc:  # pragma: no cover - defensive
         raise AttributeError(f"{path} is not a valid attribute") from exc
-
-
-def _resolve_single(
-    sensors: Dict[str, BaseSensor],
-    sensor_type: type,
-    *,
-    preferred_name: str,
-) -> Any:
-    instance = sensors.get(preferred_name)
-    if instance is not None:
-        if not isinstance(instance, sensor_type):
-            raise TypeError(
-                f"Sensor '{preferred_name}' is not of expected type {sensor_type.__name__}"
-            )
-        return instance
-    matches = [sensor for sensor in sensors.values() if isinstance(sensor, sensor_type)]
-    if len(matches) != 1:
-        raise ValueError(
-            f"Expected exactly one {sensor_type.__name__} instance, found {len(matches)}"
-        )
-    return matches[0]
-
-
-def _resolve_optional(
-    sensors: Dict[str, BaseSensor],
-    sensor_type: type,
-    *,
-    preferred_name: str,
-) -> Any | None:
-    instance = sensors.get(preferred_name)
-    if instance is not None:
-        if not isinstance(instance, sensor_type):
-            raise TypeError(
-                f"Sensor '{preferred_name}' is not of expected type {sensor_type.__name__}"
-            )
-        return instance
-    matches = [sensor for sensor in sensors.values() if isinstance(sensor, sensor_type)]
-    if not matches:
-        return None
-    if len(matches) > 1:
-        raise ValueError(
-            f"Expected at most one {sensor_type.__name__} instance, found {len(matches)}"
-        )
-    return matches[0]

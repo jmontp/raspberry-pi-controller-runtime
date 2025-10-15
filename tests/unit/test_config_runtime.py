@@ -8,10 +8,16 @@ from pathlib import Path
 import pytest
 
 from rpc_runtime.config import build_runtime_components, load_runtime_profile
+from rpc_runtime.config.models import SignalRoute
 from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
-from rpc_runtime.runtime.wrangler import HardwareAvailabilityError, InputSchema, SchemaSignal
-from rpc_runtime.sensors.combinators import ControlInputs
+from rpc_runtime.runtime.wrangler import (
+    DataWrangler,
+    HardwareAvailabilityError,
+    InputSchema,
+    SchemaSignal,
+)
 from rpc_runtime.sensors.imu.base import IMUSample
+from rpc_runtime.sensors.imu.mock import MockIMU
 
 
 def _mock_imu_sample() -> IMUSample:
@@ -24,7 +30,7 @@ def _mock_imu_sample() -> IMUSample:
     )
 
 
-def test_input_schema_optional_zero_fill() -> None:
+def test_wrangler_optional_signal_zero_fill() -> None:
     """Optional channels should fall back to the declared default value."""
     schema = InputSchema(
         name="test",
@@ -33,14 +39,28 @@ def test_input_schema_optional_zero_fill() -> None:
             SchemaSignal(name="vertical_grf_ipsi_N", required=False, default=0.0),
         ),
     )
-    inputs = ControlInputs(imu=_mock_imu_sample(), vertical_grf=None)
-    features = schema.build_features(inputs)
-    assert features["knee_flexion_angle_ipsi_rad"] == pytest.approx(0.1)
-    assert features["vertical_grf_ipsi_N"] == 0.0
+    routes = (
+        SignalRoute(
+            name="knee_flexion_angle_ipsi_rad",
+            provider="imu",
+            default=0.0,
+        ),
+        SignalRoute(
+            name="vertical_grf_ipsi_N",
+            provider="vertical_grf",
+            default=0.0,
+        ),
+    )
+    imu = MockIMU(samples=[_mock_imu_sample()], loop=False)
+    wrangler = DataWrangler(schema, routes, sensors={"imu": imu})
+    with wrangler:
+        view, _, _ = wrangler.get_sensor_data()
+    assert view["knee_flexion_angle_ipsi_rad"] == pytest.approx(0.1)
+    assert view["vertical_grf_ipsi_N"] == 0.0
 
 
-def test_input_schema_missing_required_signal_raises() -> None:
-    """Missing data for a required channel should surface an error."""
+def test_wrangler_missing_required_sensor_raises() -> None:
+    """Missing sensors for required channels should raise during setup."""
     schema = InputSchema(
         name="test",
         signals=(
@@ -48,9 +68,21 @@ def test_input_schema_missing_required_signal_raises() -> None:
             SchemaSignal(name="vertical_grf_ipsi_N", required=True),
         ),
     )
-    inputs = ControlInputs(imu=_mock_imu_sample(), vertical_grf=None)
+    routes = (
+        SignalRoute(
+            name="knee_flexion_angle_ipsi_rad",
+            provider="imu",
+            default=0.0,
+        ),
+        SignalRoute(
+            name="vertical_grf_ipsi_N",
+            provider="vertical_grf",
+            default=0.0,
+        ),
+    )
+    imu = MockIMU(samples=[_mock_imu_sample()], loop=False)
     with pytest.raises(HardwareAvailabilityError):
-        schema.build_features(inputs)
+        DataWrangler(schema, routes, sensors={"imu": imu})
 
 
 def test_runtime_profile_default_loop_executes() -> None:
@@ -62,13 +94,12 @@ def test_runtime_profile_default_loop_executes() -> None:
     profile_wo_grf = replace(profile, sensors=sensors_wo_grf)
     profile_wo_grf.validate()
     components = build_runtime_components(profile_wo_grf)
-    assert components.vertical_grf is None
     loop = RuntimeLoop(
         RuntimeLoopConfig(frequency_hz=100.0),
-        imu=components.imu,
+        sensors=components.sensors,
         actuator=components.actuator,
         controller=components.controller,
-        vertical_grf=None,
+        signal_routes=profile_wo_grf.signal_routes,
     )
     with loop:
         for _ in loop.run(duration_s=0.05):

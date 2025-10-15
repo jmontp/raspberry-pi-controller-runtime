@@ -1,18 +1,17 @@
-"""Data wrangling utilities that normalize sensor inputs into features.
-
-This module also defines a minimal InputSchema and signal resolvers so that
-configuration code stays thin. No external hardware deps are imported here.
-"""
+"""Data wrangling utilities that normalise sensor inputs into controller features."""
 
 from __future__ import annotations
 
+import time
 import types
 from dataclasses import dataclass
-from typing import Callable, Mapping, MutableMapping
+from typing import Dict, Iterable, Mapping, MutableMapping, Sequence, TYPE_CHECKING
 
+from ..sensors.base import BaseSensor
 from ..sensors.combinators import ControlInputs
-from ..sensors.grf.base import BaseVerticalGRF
-from ..sensors.imu.base import BaseIMU
+
+if TYPE_CHECKING:  # pragma: no cover - typing aid only
+    from ..config.models import SignalRoute
 
 
 @dataclass(slots=True)
@@ -46,104 +45,6 @@ class FeatureView:
         return self._data
 
 
-class DataWrangler:
-    """Plan and serve controller features from sensor inputs.
-
-    Parameters
-    ----------
-    required_inputs:
-        The `InputSchema` describing required canonical signals.
-    imu:
-        IMU instance providing joint/segment data.
-    vertical_grf:
-        Optional vertical GRF sensor.
-    diagnostics_sink:
-        Optional diagnostics sink for readiness/coverage.
-    """
-
-    def __init__(
-        self,
-        required_inputs: InputSchema,
-        *,
-        imu: BaseIMU,
-        vertical_grf: BaseVerticalGRF | None = None,
-        diagnostics_sink=None,
-    ) -> None:
-        """Create a new wrangler and validate required signals against hardware.
-
-        Args:
-            required_inputs: Input schema describing canonical controller features.
-            imu: IMU instance providing joint/segment data.
-            vertical_grf: Optional vertical GRF sensor instance.
-            diagnostics_sink: Optional diagnostics sink for readiness/coverage.
-        """
-        self._schema = required_inputs
-        self._imu = imu
-        self._vertical_grf = vertical_grf
-        self._diagnostics = diagnostics_sink
-        # Validate immediately that the configured hardware can, in principle,
-        # provide required signals.
-        available = {
-            "knee_flexion_angle_ipsi_rad",
-            "knee_flexion_velocity_ipsi_rad_s",
-            "ankle_dorsiflexion_angle_ipsi_rad",
-            "ankle_dorsiflexion_velocity_ipsi_rad_s",
-        }
-        if vertical_grf is not None:
-            available.add("vertical_grf_ipsi_N")
-        # Allow the schema to raise a meaningful error if required channels
-        # cannot be satisfied.
-        self._schema.validate_signals(available)
-
-    def __enter__(self) -> "DataWrangler":  # pragma: no cover - simple delegation
-        """Start hardware streams when entering a context."""
-        self.start()
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:  # pragma: no cover - simple delegation
-        """Stop hardware streams when leaving a context."""
-        self.stop()
-
-    def probe(self) -> None:
-        """Perform lightweight checks that hardware can start.
-
-        In this minimal implementation we trust construction-time validation.
-        """
-        return None
-
-    def start(self) -> None:
-        """Start the IMU and optional GRF streams."""
-        self._imu.start()
-        if self._vertical_grf is not None:
-            self._vertical_grf.start()
-
-    def stop(self) -> None:
-        """Stop hardware streams to release resources."""
-        if self._vertical_grf is not None:
-            self._vertical_grf.stop()
-        self._imu.stop()
-
-    def get_sensor_data(self) -> tuple[FeatureView, FeatureMetadata, ControlInputs]:
-        """Fetch the latest canonical features and metadata.
-
-        Returns a read-only feature view, lightweight metadata (timestamp,
-        staleness), and the raw `ControlInputs` for compatibility with existing
-        controllers expecting the legacy shape.
-        """
-        imu_sample = self._imu.read()
-        grf_sample = self._vertical_grf.read() if self._vertical_grf is not None else None
-        control_inputs = ControlInputs(imu=imu_sample, vertical_grf=grf_sample)
-
-        try:
-            dense_features: MutableMapping[str, float] = self._schema.build_features(control_inputs)
-        except HardwareAvailabilityError:
-            # Re-raise for the runtime to handle according to policy.
-            raise
-
-        # Freeze the view to discourage mutation.
-        view = FeatureView(types.MappingProxyType(dict(dense_features)))
-        meta = FeatureMetadata(timestamp=imu_sample.timestamp, stale=False)
-        return view, meta, control_inputs
 class HardwareAvailabilityError(RuntimeError):
     """Raised when required sensors or signals are missing for a profile."""
 
@@ -173,27 +74,9 @@ class InputSchema:
         """Return the set of all signal names."""
         return {s.name for s in self.signals}
 
-    def build_features(self, inputs: ControlInputs) -> dict[str, float]:
-        """Return a dense feature mapping for the declared channels."""
-        features: dict[str, float] = {}
-        missing_required: list[str] = []
-        for s in self.signals:
-            value = SIGNAL_RESOLVERS.get(s.name, _resolve_unknown)(inputs)
-            if value is None:
-                features[s.name] = s.default
-                if s.required:
-                    missing_required.append(s.name)
-            else:
-                features[s.name] = float(value)
-        if missing_required:
-            raise HardwareAvailabilityError(
-                "Missing required signals while building features: "
-                + ", ".join(sorted(missing_required))
-            )
-        return features
-
     def validate_signals(
-        self, available_signals: Mapping[str, bool] | set[str] | list[str]
+        self,
+        available_signals: Mapping[str, bool] | Iterable[str],
     ) -> None:
         """Ensure all required signals are available from configured sensors."""
         available = set(available_signals)
@@ -205,46 +88,133 @@ class InputSchema:
             )
 
 
-# ---------------------------------------------------------------------------
-# Canonical signal resolvers
-# ---------------------------------------------------------------------------
+class DataWrangler:
+    """Plan and serve controller features from sensor inputs."""
 
-def _resolve_joint_signal(inputs: ControlInputs, index: int, attribute: str) -> float | None:
-    if attribute == "angle":
-        try:
-            return float(inputs.imu.joint_angles_rad[index])
-        except (IndexError, TypeError):
-            return None
-    if attribute == "velocity":
-        try:
-            return float(inputs.imu.joint_velocities_rad_s[index])
-        except (IndexError, TypeError):
-            return None
-    return None
+    def __init__(
+        self,
+        required_inputs: InputSchema,
+        signal_routes: Sequence["SignalRoute"],
+        sensors: Mapping[str, BaseSensor],
+        *,
+        diagnostics_sink=None,
+    ) -> None:
+        """Create a new wrangler and validate required signals against hardware."""
+        if len(signal_routes) != len(required_inputs.signals):
+            raise ValueError(
+                "Input schema signals do not match the number of declared signal routes"
+            )
+        self._schema = required_inputs
+        self._routes = tuple(signal_routes)
+        self._sensors: Dict[str, BaseSensor] = dict(sensors)
+        self._diagnostics = diagnostics_sink
 
+        self._ordered_names = [signal.name for signal in self._schema.signals]
+        self._defaults = {signal.name: float(signal.default) for signal in self._schema.signals}
+        self._required_names = self._schema.required_signals()
 
-def _resolve_grf_signal(inputs: ControlInputs, index: int) -> float | None:
-    grf = inputs.vertical_grf
-    if grf is None:
-        return None
-    try:
-        return float(grf.forces_newton[index])
-    except (IndexError, TypeError):
-        return None
+        provider_signals: Dict[str, list[str]] = {}
+        for route in self._routes:
+            provider = route.provider
+            if provider is None:
+                continue
+            if provider not in self._sensors:
+                if route.name in self._required_names:
+                    raise HardwareAvailabilityError(
+                        f"Signal '{route.name}' references unknown sensor '{provider}'"
+                    )
+                continue
+            provider_signals.setdefault(provider, []).append(route.name)
+        self._provider_signals = {
+            alias: tuple(signals) for alias, signals in provider_signals.items()
+        }
 
+        available_for_validation = set()
+        for signals in self._provider_signals.values():
+            available_for_validation.update(signals)
+        available_for_validation.update(
+            route.name
+            for route in self._routes
+            if route.provider is None or route.provider not in self._sensors
+        )
+        self._schema.validate_signals(available_for_validation)
 
-def _resolve_unknown(inputs: ControlInputs) -> float | None:  # pragma: no cover - defensive
-    return None
+        self._primary_provider = next(
+            (route.provider for route in self._routes if route.provider is not None),
+            None,
+        )
 
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
-SIGNAL_RESOLVERS: dict[str, Callable[[ControlInputs], float | None]] = {
-    "knee_flexion_angle_ipsi_rad": lambda inputs: _resolve_joint_signal(inputs, 0, "angle"),
-    "knee_flexion_velocity_ipsi_rad_s": lambda inputs: _resolve_joint_signal(
-        inputs, 0, "velocity"
-    ),
-    "ankle_dorsiflexion_angle_ipsi_rad": lambda inputs: _resolve_joint_signal(inputs, 1, "angle"),
-    "ankle_dorsiflexion_velocity_ipsi_rad_s": lambda inputs: _resolve_joint_signal(
-        inputs, 1, "velocity"
-    ),
-    "vertical_grf_ipsi_N": lambda inputs: _resolve_grf_signal(inputs, 0),
-}
+    def __enter__(self) -> "DataWrangler":  # pragma: no cover - simple delegation
+        """Start hardware streams when entering a context."""
+        self.probe()
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:  # pragma: no cover - simple delegation
+        """Stop hardware streams when leaving a context."""
+        self.stop()
+
+    def probe(self) -> None:
+        """Perform lightweight checks that hardware can start."""
+        for sensor in self._sensors.values():
+            probe = getattr(sensor, "probe", None)
+            if probe is not None:
+                probe()
+
+    def start(self) -> None:
+        """Start all configured sensors."""
+        for sensor in self._sensors.values():
+            sensor.start()
+
+    def stop(self) -> None:
+        """Stop all configured sensors."""
+        for sensor in self._sensors.values():
+            sensor.stop()
+
+    # ------------------------------------------------------------------
+    # Data path
+    # ------------------------------------------------------------------
+
+    def get_sensor_data(self) -> tuple[FeatureView, FeatureMetadata, ControlInputs]:
+        """Fetch the latest canonical features and metadata."""
+        feature_values: MutableMapping[str, float] = {
+            name: self._defaults[name] for name in self._ordered_names
+        }
+        samples: Dict[str, object] = {}
+        missing_required: list[str] = []
+        primary_timestamp: float | None = None
+
+        for alias, signals in self._provider_signals.items():
+            sensor = self._sensors[alias]
+            sample, values = sensor.read_signals(signals)
+            samples[alias] = sample
+            if primary_timestamp is None and hasattr(sample, "timestamp"):
+                ts = getattr(sample, "timestamp")
+                if ts is not None:
+                    try:
+                        primary_timestamp = float(ts)
+                    except (TypeError, ValueError):
+                        primary_timestamp = None
+            for signal in signals:
+                value = values.get(signal)
+                if value is None:
+                    if signal in self._required_names:
+                        missing_required.append(signal)
+                    continue
+                feature_values[signal] = float(value)
+
+        if missing_required:
+            raise HardwareAvailabilityError(
+                "Missing required signals while building features: "
+                + ", ".join(sorted(set(missing_required)))
+            )
+
+        frozen = FeatureView(types.MappingProxyType(dict(feature_values)))
+        timestamp = primary_timestamp if primary_timestamp is not None else time.monotonic()
+        meta = FeatureMetadata(timestamp=timestamp, stale=False)
+        control_inputs = ControlInputs(samples=samples)
+        return frozen, meta, control_inputs

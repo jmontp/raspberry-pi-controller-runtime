@@ -5,7 +5,7 @@ from __future__ import annotations
 import abc
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, Protocol, Tuple, cast
+from typing import Dict, Iterable, Protocol, Tuple, cast
 
 from ..base import BaseSensor, BaseSensorConfig, SensorStaleDataError
 
@@ -153,6 +153,16 @@ class BaseIMU(BaseSensor):
     def read(self) -> IMUSample:
         """Return the latest controller-frame IMU sample."""
 
+    def read_signals(self, signals: Iterable[str]) -> tuple[IMUSample, dict[str, float]]:
+        """Return the latest sample along with selected canonical signals."""
+        sample = self.read()
+        values: dict[str, float] = {}
+        for name in signals:
+            value = self._map_signal(sample, name)
+            if value is not None:
+                values[name] = value
+        return sample, values
+
     def reset(self) -> None:
         """Optional method to zero orientation and velocity estimates."""
         return None
@@ -194,6 +204,45 @@ class BaseIMU(BaseSensor):
         defaults = {**DEFAULT_SEGMENT_ANGLE_CONVENTIONS, **self.SEGMENT_ANGLE_CONVENTIONS}
         fallback = "Positive rotation counter-clockwise in the sagittal plane."
         return {name: defaults.get(name, fallback) for name in self.segment_names}
+
+    # ------------------------------------------------------------------
+    # Canonical signal helpers
+    # ------------------------------------------------------------------
+
+    def _map_signal(self, sample: IMUSample, name: str) -> float | None:
+        """Translate canonical signal names into IMU sample values."""
+        joint_angle_mapping = {
+            "knee_flexion_angle_ipsi_rad": ("joint_angles_rad", 0),
+            "ankle_dorsiflexion_angle_ipsi_rad": ("joint_angles_rad", 1),
+        }
+        joint_velocity_mapping = {
+            "knee_flexion_velocity_ipsi_rad_s": ("joint_velocities_rad_s", 0),
+            "ankle_dorsiflexion_velocity_ipsi_rad_s": ("joint_velocities_rad_s", 1),
+        }
+        if name in joint_angle_mapping:
+            attribute, index = joint_angle_mapping[name]
+            return self._resolve_joint_attribute(sample, attribute, index)
+        if name in joint_velocity_mapping:
+            attribute, index = joint_velocity_mapping[name]
+            return self._resolve_joint_attribute(sample, attribute, index)
+        return None
+
+    def _resolve_joint_attribute(
+        self,
+        sample: IMUSample,
+        attribute: str,
+        index: int,
+    ) -> float | None:
+        """Return a joint attribute (angle or velocity) when available."""
+        if index < 0:
+            return None
+        data = getattr(sample, attribute, None)
+        if data is None:
+            return None
+        try:
+            return float(data[index])
+        except (IndexError, TypeError, ValueError):
+            return None
 
     @classmethod
     def _validate_config(cls, config: BaseIMUConfig) -> BaseIMUConfig:

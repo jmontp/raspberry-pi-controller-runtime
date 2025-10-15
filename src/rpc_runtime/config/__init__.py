@@ -14,6 +14,7 @@ from .profile import (
     RuntimeComponents,
     RuntimeProfile,
     SensorBinding,
+    SignalRoute,
     build_runtime_components,
     load_components,
     load_runtime_profile,
@@ -38,5 +39,6 @@ __all__ = [
     "ControllerBundle",
     "ControllerManifest",
     "SensorBinding",
+    "SignalRoute",
     "HardwareAvailabilityError",
 ]

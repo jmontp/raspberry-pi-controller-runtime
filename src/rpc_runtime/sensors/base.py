@@ -7,7 +7,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Callable, Deque
+from typing import Callable, Deque, Iterable
 
 LOGGER = logging.getLogger(__name__)
 
@@ -72,6 +72,10 @@ class BaseSensor(abc.ABC):
         """Ensure resources are released when leaving a context."""
         self.stop()
 
+    def probe(self) -> None:  # pragma: no cover - default no-op
+        """Perform a lightweight readiness check before starting streams."""
+        return None
+
     @abc.abstractmethod
     def start(self) -> None:
         """Initialise the sensor and begin streaming data."""
@@ -79,6 +83,12 @@ class BaseSensor(abc.ABC):
     @abc.abstractmethod
     def stop(self) -> None:
         """Tear down resources."""
+
+    def read_signals(self, signals: Iterable[str]) -> tuple[object, dict[str, float]]:
+        """Return the latest sample along with selected canonical signals."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement 'read_signals'"
+        )
 
     # ------------------------------------------------------------------
     # Diagnostics & validation

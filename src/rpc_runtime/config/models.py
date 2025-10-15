@@ -1,13 +1,13 @@
 """Minimal configuration models for runtime profiles.
 
-This layer remains declarative; canonical signal resolution lives in
-`rpc_runtime.runtime.wrangler` to keep configuration free of runtime deps.
+This layer remains declarative; canonical signal routing stays with the runtime
+so configuration objects avoid hardware dependencies.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 
 class HardwareAvailabilityError(RuntimeError):
@@ -64,6 +64,20 @@ class ControllerBundle:
 
 
 @dataclass(slots=True)
+class SignalRoute:
+    """Ordered mapping from canonical signal to a hardware provider."""
+
+    name: str
+    provider: str | None
+    default: float = 0.0
+
+    @property
+    def derived(self) -> bool:
+        """Signal is derived by software rather than hardware."""
+        return self.provider is None
+
+
+@dataclass(slots=True)
 class RuntimeProfile:
     """Top-level runtime configuration assembled from declarative profiles."""
 
@@ -71,6 +85,7 @@ class RuntimeProfile:
     sensors: tuple[SensorBinding, ...]
     actuator: ActuatorBinding
     controller: ControllerBundle
+    signal_routes: tuple[SignalRoute, ...]
 
     def available_signals(self) -> set[str]:
         """Return the union of signals exposed by all configured sensors."""
@@ -79,8 +94,27 @@ class RuntimeProfile:
             signals.update(sensor.available_signals())
         return signals
 
+    def sensor_bindings(self) -> Mapping[str, SensorBinding]:
+        """Return sensor bindings keyed by alias."""
+        return {sensor.name: sensor for sensor in self.sensors}
+
     def validate(self) -> None:
         """Ensure the declared hardware satisfies controller requirements."""
         available = self.available_signals()
         self.controller.manifest.validate_hardware(available)
-
+        bindings = self.sensor_bindings()
+        required_signals = self.controller.manifest.input_schema.required_signals()
+        for route in self.signal_routes:
+            if route.provider is None:
+                continue
+            binding = bindings.get(route.provider)
+            if binding is None:
+                if route.name in required_signals:
+                    raise HardwareAvailabilityError(
+                        f"Signal '{route.name}' references unknown sensor '{route.provider}'"
+                    )
+                continue
+            if route.name not in binding.provides:
+                raise HardwareAvailabilityError(
+                    f"Sensor '{route.provider}' does not provide signal '{route.name}'"
+                )

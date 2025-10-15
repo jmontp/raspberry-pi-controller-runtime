@@ -25,7 +25,7 @@ flowchart TD
     subgraph Init ["Initialize"]
         direction TB
         I0 --> I1["Controller bundle instantiation"]
-        I1 --> I2["DataWrangler(required_inputs, hardware)"]
+        I1 --> I2["DataWrangler(required_inputs, signal_routes, sensors)"]
         I2 --> I3["SafeActuator / SafetyManager wiring"]
     end
     style Init fill:#fffbe6,stroke:#fadb14,stroke-width:2px
@@ -65,28 +65,29 @@ flowchart TD
 
 DataWrangler initialises once, so the runtime loop simply requests the next
 packet each tick. Sensors emit canonical values; the wrangler places them into
-the buffer following the controller-defined order, and derived feature resolvers
-run using the same metadata that seeded the plan. The runtime orchestrator logs
-each feature/torque snapshot before applying the safety-clamped command to the
-actuator.
+the buffer following the controller-defined order. Signals without a hardware
+provider (derived values) retain their schema defaults until software layers
+populate them explicitly. The runtime orchestrator logs each feature/torque
+snapshot before applying the safety-clamped command to the actuator.
 
 ## Component Contracts
 
 ### DataWrangler interface
 
-- `DataWrangler(required_inputs, hardware_map, *, diagnostics_sink=None)` —
-  constructor validates that each required canonical signal maps to a hardware
-  alias, allocates the feature buffer following `input_signals`, and wires up
-  SensorType wrappers. Validation failures raise `HardwareAvailabilityError`.
+- `DataWrangler(required_inputs, signal_routes, sensors, *, diagnostics_sink=None)` —
+  constructor wires in the ordered signal routes declared in the profile,
+  verifies that every required signal has a backing sensor, and prepares
+  provider→signal lookup tables. Signals that omit a provider are treated as
+  derived and initialised to their schema default. Validation failures raise
+  `HardwareAvailabilityError`.
 - `probe()` — performs lightweight readiness checks (e.g., ensure `/dev`
-  entries or Bluetooth addresses exist, drivers can be imported) without
-  starting streams.
 - `start()` — opens all configured sensors, performs warm-up/calibration, and
   readies the reusable feature buffer for runtime ticks.
-- `get_sensor_data()` — fetches the latest canonical values for the required
-  signals, populates the feature buffer in-place, and returns a read-only view
-  along with metadata (timestamps, staleness flags). Staleness raises
-  `SensorStaleDataError` by default.
+- `get_sensor_data()` — asks each sensor for its subscribed signals, stores the
+  responses in the canonical buffer order, and returns a read-only view along
+  with metadata (timestamps, staleness flags). Missing required measurements
+  raise `SensorStaleDataError` by default, while optional signals fall back to
+  their configured default.
 - `stop()` — stops all sensors and flushes modality diagnostics.
 
 Plan construction happens in the constructor. After `start()` succeeds, the
@@ -109,8 +110,8 @@ tick.
 
 - Allocated once, reused every tick; the runtime may retain a pointer for
   diagnostics, but only the wrangler writes into it.
-- Buffer indices are stable across the session; derived feature resolvers write
-  directly to their assigned slots.
+- Buffer indices are stable across the session; derived signals occupy fixed
+  slots and default values until an upstream component provides replacements.
 - Each tick, the wrangler records presence/absence of optional signals so the
   diagnostics sink can report coverage (e.g., missing GRF sensor).
 
@@ -493,9 +494,9 @@ To switch from the serial IMU to the Bluetooth variant, change the
 - Canonical names are registered centrally so controllers and hardware share the
   same vocabulary (`hip_flexion_angle_ipsi_rad`, `vertical_grf_ipsi_N`,
   `knee_flexion_moment_ipsi_Nm`, etc.).
-- Derivation is handled inside the SensorType implementation (e.g., IMU may
-  compute `knee_flexion_angle_ipsi_rad` from segment angles). The configuration does not declare
-  resolvers — it only maps signals to hardware aliases.
+- Derivation is handled inside sensor implementations (e.g., an IMU may
+  compute `knee_flexion_angle_ipsi_rad` from segment angles). Configuration only
+  maps canonical signals to hardware aliases or marks them as derived.
 - Optional inputs are marked on `input_signals` entries (e.g., `required: false`).
   Absence is handled by runtime policy rather than config-level defaults.
 

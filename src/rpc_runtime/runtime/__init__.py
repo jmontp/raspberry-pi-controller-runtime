@@ -9,7 +9,14 @@ from .diagnostics import (
 from .loop import RuntimeLoop, RuntimeLoopConfig
 from .safety import SafetyConfig, SafetyManager
 from .scheduler import BaseScheduler, SimpleScheduler, SoftRealtimeScheduler
-from .wrangler import DataWrangler, FeatureMetadata, FeatureView
+from .wrangler import (
+    DataWrangler,
+    FeatureMetadata,
+    FeatureView,
+    HardwareAvailabilityError,
+    InputSchema,
+    SchemaSignal,
+)
 
 __all__ = [
     "RuntimeLoop",
@@ -26,4 +33,7 @@ __all__ = [
     "DataWrangler",
     "FeatureView",
     "FeatureMetadata",
+    "InputSchema",
+    "SchemaSignal",
+    "HardwareAvailabilityError",
 ]

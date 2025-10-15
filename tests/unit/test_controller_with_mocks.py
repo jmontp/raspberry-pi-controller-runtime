@@ -8,6 +8,7 @@ from rpc_runtime.controllers.pi_controller import (
     PIControllerConfig,
     PIControllerGains,
 )
+from rpc_runtime.config.models import SignalRoute
 from rpc_runtime.controllers.torque_models.mock import MockTorqueModel
 from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.runtime.wrangler import InputSchema, SchemaSignal
@@ -59,12 +60,19 @@ def test_controller_with_mock_devices() -> None:
         torque_model=torque_model,
         input_schema=schema,
     )
+    routes = (
+        SignalRoute(name="knee_flexion_angle_ipsi_rad", provider="imu", default=0.0),
+        SignalRoute(name="knee_flexion_velocity_ipsi_rad_s", provider="imu", default=0.0),
+        SignalRoute(name="ankle_dorsiflexion_angle_ipsi_rad", provider="imu", default=0.0),
+        SignalRoute(name="ankle_dorsiflexion_velocity_ipsi_rad_s", provider="imu", default=0.0),
+        SignalRoute(name="vertical_grf_ipsi_N", provider="vertical_grf", default=0.0),
+    )
     loop = RuntimeLoop(
         RuntimeLoopConfig(frequency_hz=100.0),
-        imu=mock_imu,
+        sensors={"imu": mock_imu, "vertical_grf": mock_grf},
         actuator=mock_actuator,
         controller=controller,
-        vertical_grf=mock_grf,
+        signal_routes=routes,
     )
 
     with loop:

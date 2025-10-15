@@ -32,10 +32,10 @@ components = build_runtime_components(profile)
 
 loop = RuntimeLoop(
     RuntimeLoopConfig(frequency_hz=500),
-    imu=components.imu,
+    sensors=components.sensors,
     actuator=components.actuator,
     controller=components.controller,
-    vertical_grf=components.vertical_grf,
+    signal_routes=profile.signal_routes,
 )
 ```
 

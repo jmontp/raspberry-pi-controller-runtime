@@ -66,9 +66,9 @@ class InMemoryDiagnosticsSink(DiagnosticsSink):
         grf = feature_packet.vertical_grf
         row = {
             "timestamp": float(timestamp),
-            "imu_joint_angles": tuple(float(x) for x in imu.joint_angles_rad),
-            "imu_joint_vel": tuple(float(x) for x in imu.joint_velocities_rad_s),
-            "grf_forces": tuple(float(x) for x in (grf.forces_newton if grf else ())),
+            "imu_joint_angles": tuple(float(x) for x in getattr(imu, "joint_angles_rad", ())) if imu else (),
+            "imu_joint_vel": tuple(float(x) for x in getattr(imu, "joint_velocities_rad_s", ())) if imu else (),
+            "grf_forces": tuple(float(x) for x in getattr(grf, "forces_newton", ())) if grf else (),
             "torque_raw": {k: float(v) for k, v in torque_command_raw.torques_nm.items()},
             "torque_safe": {k: float(v) for k, v in torque_command_safe.torques_nm.items()},
         }
@@ -117,9 +117,9 @@ class CSVDiagnosticsSink(DiagnosticsSink):
 
         imu = feature_packet.imu
         grf = feature_packet.vertical_grf
-        n_joints = len(imu.joint_angles_rad)
-        n_segments = len(imu.segment_angles_rad)
-        n_grf = len(grf.forces_newton) if grf is not None else 0
+        n_joints = len(getattr(imu, "joint_angles_rad", ())) if imu is not None else 0
+        n_segments = len(getattr(imu, "segment_angles_rad", ())) if imu is not None else 0
+        n_grf = len(getattr(grf, "forces_newton", ())) if grf is not None else 0
 
         torque_keys = sorted(
             set(torque_command_raw.torques_nm) | set(torque_command_safe.torques_nm)
@@ -178,15 +178,16 @@ class CSVDiagnosticsSink(DiagnosticsSink):
         grf = feature_packet.vertical_grf
         row: dict[str, float] = {"timestamp": float(timestamp)}
 
-        for i, v in enumerate(imu.joint_angles_rad):
-            row[f"imu_joint_angle_{i}"] = float(v)
-        for i, v in enumerate(imu.joint_velocities_rad_s):
-            row[f"imu_joint_vel_{i}"] = float(v)
-        if self._include_segments:
-            for i, v in enumerate(imu.segment_angles_rad):
-                row[f"seg_angle_{i}"] = float(v)
-            for i, v in enumerate(imu.segment_velocities_rad_s):
-                row[f"seg_vel_{i}"] = float(v)
+        if imu is not None:
+            for i, v in enumerate(getattr(imu, "joint_angles_rad", ())):
+                row[f"imu_joint_angle_{i}"] = float(v)
+            for i, v in enumerate(getattr(imu, "joint_velocities_rad_s", ())):
+                row[f"imu_joint_vel_{i}"] = float(v)
+            if self._include_segments:
+                for i, v in enumerate(getattr(imu, "segment_angles_rad", ())):
+                    row[f"seg_angle_{i}"] = float(v)
+                for i, v in enumerate(getattr(imu, "segment_velocities_rad_s", ())):
+                    row[f"seg_vel_{i}"] = float(v)
         if grf is not None:
             for i, v in enumerate(grf.forces_newton):
                 row[f"grf_force_{i}"] = float(v)
@@ -216,4 +217,3 @@ class CSVDiagnosticsSink(DiagnosticsSink):
                 self._file.close()
         except Exception:
             pass
-
