@@ -3,7 +3,6 @@
 import pytest
 
 from rpc_runtime.actuators.mock import MockActuator
-from rpc_runtime.config.models import InputSchema, SchemaSignal
 from rpc_runtime.controllers.pi_controller import (
     PIController,
     PIControllerConfig,
@@ -11,6 +10,7 @@ from rpc_runtime.controllers.pi_controller import (
 )
 from rpc_runtime.controllers.torque_models.mock import MockTorqueModel
 from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
+from rpc_runtime.runtime.wrangler import InputSchema, SchemaSignal
 from rpc_runtime.sensors.grf.mock import MockVerticalGRF
 from rpc_runtime.sensors.imu.base import BaseIMUConfig, IMUSample, IMUStaleDataError
 from rpc_runtime.sensors.imu.mock import MockIMU
@@ -46,11 +46,11 @@ def test_controller_with_mock_devices() -> None:
     schema = InputSchema(
         name="pi_inputs",
         signals=(
-            SchemaSignal.from_registry("knee_angle"),
-            SchemaSignal.from_registry("knee_velocity"),
-            SchemaSignal.from_registry("ankle_angle"),
-            SchemaSignal.from_registry("ankle_velocity"),
-            SchemaSignal.from_registry("grf_total", required=False, default=0.0),
+            SchemaSignal(name="knee_angle"),
+            SchemaSignal(name="knee_velocity"),
+            SchemaSignal(name="ankle_angle"),
+            SchemaSignal(name="ankle_velocity"),
+            SchemaSignal(name="grf_total", required=False, default=0.0),
         ),
     )
     controller = PIController(

@@ -24,10 +24,10 @@ The runtime now supports declarative hardware/controller manifests. Define your 
 from pathlib import Path
 
 from rpc_runtime.config import load_runtime_profile
-from rpc_runtime.config.runtime import build_runtime_components
+from rpc_runtime.config import build_runtime_components
 from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
 
-profile = load_runtime_profile(Path("src/rpc_runtime/config/default.yaml"))
+profile = load_runtime_profile(Path("src/rpc_runtime/config/hardware_config.yaml"))
 components = build_runtime_components(profile)
 
 loop = RuntimeLoop(

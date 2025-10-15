@@ -1,27 +1,42 @@
-"""Configuration helpers for wiring runtime components from declarative profiles."""
+"""Convenience exports for profile loading and runtime construction."""
 
-from .loader import load_runtime_profile
-from .models import (
-    CANONICAL_SIGNAL_REGISTRY,
+from __future__ import annotations
+
+from os import PathLike
+from typing import Union
+
+from rpc_runtime.runtime.wrangler import HardwareAvailabilityError
+
+from .profile import (
     ActuatorBinding,
     ControllerBundle,
     ControllerManifest,
-    HardwareAvailabilityError,
-    InputSchema,
+    RuntimeComponents,
     RuntimeProfile,
-    SchemaSignal,
     SensorBinding,
+    build_runtime_components,
+    load_components,
+    load_runtime_profile,
 )
+
+
+def load_components_from(
+    path: Union[str, bytes, PathLike[str], PathLike[bytes]]
+) -> RuntimeComponents:
+    """Convenience wrapper mirroring legacy API name."""
+    return load_components(path)
+
 
 __all__ = [
     "load_runtime_profile",
-    "CANONICAL_SIGNAL_REGISTRY",
+    "build_runtime_components",
+    "load_components",
+    "load_components_from",
+    "RuntimeProfile",
+    "RuntimeComponents",
     "ActuatorBinding",
     "ControllerBundle",
     "ControllerManifest",
-    "HardwareAvailabilityError",
-    "InputSchema",
-    "RuntimeProfile",
-    "SchemaSignal",
     "SensorBinding",
+    "HardwareAvailabilityError",
 ]

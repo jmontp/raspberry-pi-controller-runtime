@@ -1,6 +1,6 @@
 # Hardware Bring-up
 
-1. **IMUs** — Mount devices following the joint order defined in `config/default.yaml`. If the adapter supports it, call `imu.as_resettable()?.zero()` or `imu.reset()` to align offsets before starting the loop.
+1. **IMUs** — Mount devices following the joint order defined in `config/hardware_config.yaml`. If the adapter supports it, call `imu.as_resettable()?.zero()` or `imu.reset()` to align offsets before starting the loop.
    - Software adapters expose their connection details via `BaseIMUConfig`. Override `port_map` (placeholders default to `/dev/ttyIMU_<segment>`) when USB device paths differ from your deployed symlinks. Configure `max_stale_samples`, `max_stale_time_s`, and `fault_strategy` to control how the runtime reacts to stale or missing IMU packets. The MicroStrain implementation requires the HBK MSCL Python bindings (`mscl`).
 2. **FSRs** — Pair the Bluetooth FSR board (see `sensors/grf/fsr.py`). Update the MAC address in the configuration profile.
    - GRF adapters use `BaseVerticalGRFConfig` for channel naming and staleness policies. Set `fault_strategy` to `fallback` if you prefer neutral force samples when packets drop.

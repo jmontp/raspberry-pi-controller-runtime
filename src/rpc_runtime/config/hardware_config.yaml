@@ -1,0 +1,69 @@
+profile:
+  name: mock_pi_default
+  controller: pi_mock
+  actuator: mock_actuator
+  sensors:
+    - name: imu
+      binding: mock_imu
+    - name: vertical_grf
+      binding: mock_grf
+      required: false
+
+schemas:
+  pi_inputs:
+    channels:
+      - knee_angle
+      - knee_velocity
+      - ankle_angle
+      - ankle_velocity
+      - { signal: grf_total, required: false, default: 0.0 }
+  pi_outputs:
+    channels:
+      - knee_torque
+      - ankle_torque
+
+controllers:
+  pi_mock:
+    implementation: rpc_runtime.controllers.pi_controller.PIController
+    input_schema: pi_inputs
+    output_schema: pi_outputs
+    joints: ["knee", "ankle"]
+    description: "Mock PI controller bundle for development and testing."
+    config:
+      dt: 0.01
+      torque_scale: 0.1
+      torque_limit_nm: 10.0
+      gains:
+        kp:
+          knee: 0.0
+          ankle: 0.0
+        ki:
+          knee: 0.0
+          ankle: 0.0
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
+      config:
+        outputs:
+          knee: 0.0
+          ankle: 0.0
+
+sensors:
+  mock_imu:
+    driver: rpc_runtime.sensors.imu.mock.MockIMU
+    provides:
+      - knee_angle
+      - knee_velocity
+      - ankle_angle
+      - ankle_velocity
+    config:
+      loop: true
+  mock_grf:
+    driver: rpc_runtime.sensors.grf.mock.MockVerticalGRF
+    provides:
+      - grf_total
+    config: {}
+
+actuators:
+  mock_actuator:
+    driver: rpc_runtime.actuators.mock.MockActuator
+    config: {}

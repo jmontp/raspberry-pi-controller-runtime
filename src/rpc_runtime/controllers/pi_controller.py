@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Mapping
 
-from rpc_runtime.config.models import InputSchema
+from rpc_runtime.runtime.wrangler import InputSchema
 
 from ..actuators.base import TorqueCommand
 from .torque_models.base import TorqueModel

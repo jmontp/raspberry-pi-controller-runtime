@@ -7,14 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from rpc_runtime.config import load_runtime_profile
-from rpc_runtime.config.models import (
-    HardwareAvailabilityError,
-    InputSchema,
-    SchemaSignal,
-)
-from rpc_runtime.config.runtime import build_runtime_components
+from rpc_runtime.config import build_runtime_components, load_runtime_profile
 from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
+from rpc_runtime.runtime.wrangler import HardwareAvailabilityError, InputSchema, SchemaSignal
 from rpc_runtime.sensors.combinators import ControlInputs
 from rpc_runtime.sensors.imu.base import IMUSample
 
@@ -34,8 +29,8 @@ def test_input_schema_optional_zero_fill() -> None:
     schema = InputSchema(
         name="test",
         signals=(
-            SchemaSignal.from_registry("knee_angle", required=True),
-            SchemaSignal.from_registry("grf_total", required=False, default=0.0),
+            SchemaSignal(name="knee_angle", required=True),
+            SchemaSignal(name="grf_total", required=False, default=0.0),
         ),
     )
     inputs = ControlInputs(imu=_mock_imu_sample(), vertical_grf=None)
@@ -49,8 +44,8 @@ def test_input_schema_missing_required_signal_raises() -> None:
     schema = InputSchema(
         name="test",
         signals=(
-            SchemaSignal.from_registry("knee_angle", required=True),
-            SchemaSignal.from_registry("grf_total", required=True),
+            SchemaSignal(name="knee_angle", required=True),
+            SchemaSignal(name="grf_total", required=True),
         ),
     )
     inputs = ControlInputs(imu=_mock_imu_sample(), vertical_grf=None)
@@ -60,7 +55,7 @@ def test_input_schema_missing_required_signal_raises() -> None:
 
 def test_runtime_profile_default_loop_executes() -> None:
     """Default YAML profile should load and drive a mock runtime loop."""
-    profile_path = Path("src/rpc_runtime/config/default.yaml")
+    profile_path = Path("src/rpc_runtime/config/hardware_config.yaml")
     profile = load_runtime_profile(profile_path)
     # Drop the optional GRF sensor to exercise zero-filling in the schema.
     sensors_wo_grf = tuple(sensor for sensor in profile.sensors if sensor.name != "vertical_grf")
