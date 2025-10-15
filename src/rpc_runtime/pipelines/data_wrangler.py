@@ -18,10 +18,10 @@ import types
 from dataclasses import dataclass
 from typing import Mapping, MutableMapping
 
+from ..config.models import HardwareAvailabilityError, InputSchema
 from ..sensors.combinators import ControlInputs
 from ..sensors.grf.base import BaseVerticalGRF
 from ..sensors.imu.base import BaseIMU
-from ..config.models import HardwareAvailabilityError, InputSchema
 
 
 @dataclass(slots=True)
@@ -39,15 +39,19 @@ class FeatureView:
     _data: Mapping[str, float]
 
     def __getitem__(self, key: str) -> float:
+        """Return the value for a canonical feature name."""
         return self._data[key]
 
     def get(self, key: str, default: float | None = None) -> float | None:
+        """Fetch a feature value or return ``default`` when absent."""
         return self._data.get(key, default)
 
     def items(self):  # pragma: no cover - convenience
+        """Iterate over ``(name, value)`` pairs in the view."""
         return self._data.items()
 
     def as_dict(self) -> Mapping[str, float]:  # pragma: no cover - convenience
+        """Expose the underlying mapping without copying."""
         return self._data
 
 
@@ -74,6 +78,14 @@ class DataWrangler:
         vertical_grf: BaseVerticalGRF | None = None,
         diagnostics_sink=None,
     ) -> None:
+        """Create a new wrangler and validate required signals against hardware.
+
+        Args:
+            required_inputs: Input schema describing canonical controller features.
+            imu: IMU instance providing joint/segment data.
+            vertical_grf: Optional vertical GRF sensor instance.
+            diagnostics_sink: Optional diagnostics sink for readiness/coverage.
+        """
         self._schema = required_inputs
         self._imu = imu
         self._vertical_grf = vertical_grf
@@ -91,10 +103,12 @@ class DataWrangler:
     # Lifecycle
     # ------------------------------------------------------------------
     def __enter__(self) -> "DataWrangler":  # pragma: no cover - simple delegation
+        """Start hardware streams when entering a context."""
         self.start()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # pragma: no cover - simple delegation
+        """Stop hardware streams when leaving a context."""
         self.stop()
 
     def probe(self) -> None:
@@ -105,11 +119,13 @@ class DataWrangler:
         return None
 
     def start(self) -> None:
+        """Start the IMU and optional GRF streams."""
         self._imu.start()
         if self._vertical_grf is not None:
             self._vertical_grf.start()
 
     def stop(self) -> None:
+        """Stop hardware streams to release resources."""
         if self._vertical_grf is not None:
             self._vertical_grf.stop()
         self._imu.stop()

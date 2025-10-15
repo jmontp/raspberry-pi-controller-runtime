@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 def main() -> None:
+    """Copy a controller bundle to a Raspberry Pi via scp."""
     parser = argparse.ArgumentParser(description="Flash controller runtime to Raspberry Pi")
     parser.add_argument("bundle", type=Path, help="Path to torque model bundle")
     parser.add_argument("host", help="Pi hostname or IP")

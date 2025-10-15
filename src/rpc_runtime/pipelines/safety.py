@@ -8,7 +8,7 @@ diagnostics.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Mapping
 
 from ..actuators.base import TorqueCommand
@@ -32,14 +32,28 @@ class SafetyManager:
     """Clamp torque commands and collect simple diagnostics."""
 
     def __init__(self, config: SafetyConfig | None = None) -> None:
+        """Create a new safety manager with optional torque limits.
+
+        Args:
+            config: Safety configuration including optional per-joint limits.
+        """
         self._config = config or SafetyConfig()
         self._metrics = SafetyMetrics()
 
     @property
     def metrics(self) -> SafetyMetrics:
+        """Return runtime safety metrics (e.g., clamp event count)."""
         return self._metrics
 
     def enforce(self, command: TorqueCommand) -> TorqueCommand:
+        """Clamp torque commands to configured limits.
+
+        Args:
+            command: Candidate torque command to validate and clamp.
+
+        Returns:
+            TorqueCommand: A new command with torques clipped to limits.
+        """
         limits = self._config.torque_limits_nm
         if not limits:
             return command
@@ -59,4 +73,3 @@ class SafetyManager:
         if clamped:
             self._metrics.clamp_events += 1
         return TorqueCommand(timestamp=command.timestamp, torques_nm=sanitized)
-

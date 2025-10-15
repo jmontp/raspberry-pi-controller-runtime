@@ -15,11 +15,11 @@ from rpc_runtime.controllers.pi_controller import (
     PIControllerGains,
 )
 from rpc_runtime.controllers.torque_models.onnx_runtime import ONNXTorqueModel
-from rpc_runtime.sensors.grf.base import VerticalGRFSample
 from rpc_runtime.sensors.imu.base import IMUSample
 
 
 def main() -> None:
+    """Replay a CSV of features through the PI controller and print sample output."""
     parser = argparse.ArgumentParser(description="Replay recorded CSV through the controller")
     parser.add_argument("csv", type=Path)
     parser.add_argument("bundle", type=Path)
@@ -56,10 +56,7 @@ def main() -> None:
                 float(row.foot_velocity),
             ),
         )
-        grf_sample = VerticalGRFSample(
-            timestamp=float(row.timestamp),
-            forces_newton=(float(row.grf),),
-        )
+        # GRF is consumed directly as a canonical feature below.
         features = {
             "knee_angle": float(row.knee_angle),
             "knee_velocity": float(row.knee_velocity),

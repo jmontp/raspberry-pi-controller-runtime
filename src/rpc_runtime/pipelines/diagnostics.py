@@ -9,7 +9,7 @@ logs or integrate with pandas without changing the `RuntimeLoop` contract.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping
+from typing import Mapping
 
 from ..actuators.base import TorqueCommand
 from ..sensors.combinators import ControlInputs
@@ -68,6 +68,15 @@ class InMemoryDiagnosticsSink(DiagnosticsSink):
         torque_command_safe: TorqueCommand,
         scheduler: Mapping[str, float] | None = None,
     ) -> None:
+        """Append a diagnostics row for a single control tick.
+
+        Args:
+            timestamp: Monotonic timestamp of the IMU sample.
+            feature_packet: Raw inputs used by the controller (for context).
+            torque_command_raw: Controller output before safety clamping.
+            torque_command_safe: Command after safety enforcement.
+            scheduler: Optional scheduler metrics to include in the row.
+        """
         if len(self.rows) >= self.capacity:
             # Drop oldest to keep memory bounded
             self.rows.pop(0)
@@ -90,6 +99,5 @@ class InMemoryDiagnosticsSink(DiagnosticsSink):
         self.rows.append(row)
 
     def flush(self) -> None:
-        # Nothing to do for an in-memory sink. Hook provided for API parity.
+        """Persist buffered rows (no-op for in-memory sink)."""
         return None
-

@@ -8,7 +8,6 @@ from typing import Dict, Mapping
 from rpc_runtime.config.models import InputSchema
 
 from ..actuators.base import TorqueCommand
-from ..sensors.combinators import ControlInputs
 from .torque_models.base import TorqueModel
 
 
@@ -80,6 +79,10 @@ class PIController:
             config: Control loop timing, limits, and joint ordering.
             gains: Per-joint PI gains.
             torque_model: Feed-forward torque provider.
+            input_schema: Optional input schema describing canonical controller
+                features. When provided, the runtime constructs a
+                `DataWrangler` that materialises features in this order every
+                tick.
         """
         self._config = config
         self._torque_model = torque_model
@@ -110,7 +113,7 @@ class PIController:
         # Accept either a plain mapping or our FeatureView wrapper.
         feature_map: Mapping[str, float]
         if hasattr(features, "as_dict"):
-            feature_map = getattr(features, "as_dict")()
+            feature_map = features.as_dict()  # type: ignore[assignment]
         else:
             feature_map = dict(features)
         torque_ff = self._torque_model.run(dict(feature_map))

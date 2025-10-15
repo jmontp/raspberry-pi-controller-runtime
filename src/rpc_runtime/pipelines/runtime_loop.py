@@ -11,10 +11,10 @@ from ..controllers.pi_controller import PIController
 from ..sensors.combinators import ControlInputs
 from ..sensors.grf.base import BaseVerticalGRF
 from ..sensors.imu.base import BaseIMU
-from .diagnostics import DiagnosticsSink, NoOpDiagnosticsSink
 from .data_wrangler import DataWrangler
+from .diagnostics import DiagnosticsSink, NoOpDiagnosticsSink
+from .safety import SafetyConfig, SafetyManager
 from .scheduler import BaseScheduler, SimpleScheduler
-from .safety import SafetyManager, SafetyConfig
 
 
 @dataclass(slots=True)
@@ -86,7 +86,10 @@ class RuntimeLoop:
                 for tick_index, _ in enumerate(scheduler.ticks()):
                     features_view, meta, control_inputs = self._wrangler.get_sensor_data()
                     imu_sample = control_inputs.imu
-                    raw_command = self._controller.compute_torque(features_view, timestamp=meta.timestamp)
+                    raw_command = self._controller.compute_torque(
+                        features_view,
+                        timestamp=meta.timestamp,
+                    )
                     safe_command = self._safety.enforce(raw_command)
                     scheduler_snapshot: Mapping[str, float] = {
                         "loop_time_s": time.monotonic() - start,

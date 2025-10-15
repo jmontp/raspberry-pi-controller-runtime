@@ -47,7 +47,11 @@ def build_runtime_components(profile: RuntimeProfile) -> RuntimeComponents:
         sensor_instances[sensor.name] = instance
 
     imu = _resolve_single(sensor_instances, BaseIMU, preferred_name="imu")
-    vertical_grf = _resolve_optional(sensor_instances, BaseVerticalGRF, preferred_name="vertical_grf")
+    vertical_grf = _resolve_optional(
+        sensor_instances,
+        BaseVerticalGRF,
+        preferred_name="vertical_grf",
+    )
 
     actuator_cls = _import_symbol(profile.actuator.driver)
     actuator = actuator_cls(**profile.actuator.config)

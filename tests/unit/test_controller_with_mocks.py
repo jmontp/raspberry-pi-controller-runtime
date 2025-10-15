@@ -3,6 +3,7 @@
 import pytest
 
 from rpc_runtime.actuators.mock import MockActuator
+from rpc_runtime.config.models import InputSchema, SchemaSignal
 from rpc_runtime.controllers.pi_controller import (
     PIController,
     PIControllerConfig,
@@ -13,7 +14,6 @@ from rpc_runtime.pipelines.runtime_loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.sensors.grf.mock import MockVerticalGRF
 from rpc_runtime.sensors.imu.base import BaseIMUConfig, IMUSample, IMUStaleDataError
 from rpc_runtime.sensors.imu.mock import MockIMU
-from rpc_runtime.config.models import InputSchema, SchemaSignal
 
 
 def test_controller_with_mock_devices() -> None:
