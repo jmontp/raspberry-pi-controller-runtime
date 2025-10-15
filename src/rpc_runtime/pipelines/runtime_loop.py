@@ -12,6 +12,7 @@ from ..sensors.combinators import ControlInputs
 from ..sensors.grf.base import BaseVerticalGRF
 from ..sensors.imu.base import BaseIMU
 from .diagnostics import DiagnosticsSink, NoOpDiagnosticsSink
+from .data_wrangler import DataWrangler
 from .scheduler import BaseScheduler, SimpleScheduler
 
 
@@ -46,12 +47,32 @@ class RuntimeLoop:
             lambda duration: SimpleScheduler(config.frequency_hz, duration)
         )
         self._diagnostics: DiagnosticsSink = diagnostics or NoOpDiagnosticsSink()
+        # Opportunistically create a DataWrangler when the controller declares
+        # an input schema. This keeps backward compatibility while aligning
+        # with the new architecture.
+        input_schema = getattr(controller, "_input_schema", None)
+        self._wrangler: DataWrangler | None = None
+        if input_schema is not None:
+            try:
+                self._wrangler = DataWrangler(
+                    required_inputs=input_schema,
+                    imu=self._imu,
+                    vertical_grf=self._vertical_grf,
+                    diagnostics_sink=self._diagnostics,
+                )
+            except Exception:
+                # If wrangler construction fails for any reason, fall back to
+                # legacy direct sensor polling.
+                self._wrangler = None
 
     def __enter__(self) -> "RuntimeLoop":
         """Enter the loop context by initialising sensors and actuators."""
-        self._imu.__enter__()
-        if self._vertical_grf is not None:
-            self._vertical_grf.__enter__()
+        if self._wrangler is not None:
+            self._wrangler.__enter__()
+        else:
+            self._imu.__enter__()
+            if self._vertical_grf is not None:
+                self._vertical_grf.__enter__()
         self._actuator.__enter__()
         self._controller.reset()
         return self
@@ -59,9 +80,12 @@ class RuntimeLoop:
     def __exit__(self, exc_type, exc, tb) -> None:
         """Tear down resources when leaving the context."""
         self._actuator.__exit__(exc_type, exc, tb)
-        if self._vertical_grf is not None:
-            self._vertical_grf.__exit__(exc_type, exc, tb)
-        self._imu.__exit__(exc_type, exc, tb)
+        if self._wrangler is not None:
+            self._wrangler.__exit__(exc_type, exc, tb)
+        else:
+            if self._vertical_grf is not None:
+                self._vertical_grf.__exit__(exc_type, exc, tb)
+            self._imu.__exit__(exc_type, exc, tb)
         self._diagnostics.flush()
 
     def run(self, duration_s: float | None = None) -> Iterable[ControlInputs]:
@@ -71,13 +95,17 @@ class RuntimeLoop:
         with scheduler:
             try:
                 for tick_index, _ in enumerate(scheduler.ticks()):
-                    imu_sample = self._imu.read()
-                    grf_sample = (
-                        self._vertical_grf.read()
-                        if self._vertical_grf is not None
-                        else None
-                    )
-                    control_inputs = ControlInputs(imu=imu_sample, vertical_grf=grf_sample)
+                    if self._wrangler is not None:
+                        _, meta, control_inputs = self._wrangler.get_sensor_data()
+                        imu_sample = control_inputs.imu
+                    else:
+                        imu_sample = self._imu.read()
+                        grf_sample = (
+                            self._vertical_grf.read()
+                            if self._vertical_grf is not None
+                            else None
+                        )
+                        control_inputs = ControlInputs(imu=imu_sample, vertical_grf=grf_sample)
                     raw_command = self._controller.tick(control_inputs)
                     safe_command = raw_command
                     scheduler_snapshot: Mapping[str, float] = {
