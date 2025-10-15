@@ -21,61 +21,29 @@ touching orchestration code.
 
 ```mermaid
 flowchart TD
-    start((Start)) --> I0["Load hardware config"]
+    start((Start)) --> I0["load_runtime_profile"]
     subgraph Init ["Initialize"]
         direction TB
-        I0 --> I1["Initialize controller/model"]
-        I1 --> I2["Query expected inputs / outputs"]
-        I2 --> I3["Initialize DataWrangler"]
-        I3 --> I4["Initialize actuators"]
+        I0 --> I1["Controller bundle instantiation"]
+        I1 --> I2["DataWrangler(required_inputs, hardware)"]
+        I2 --> I3["SafeActuator / SafetyManager wiring"]
     end
     style Init fill:#fffbe6,stroke:#fadb14,stroke-width:2px
 
     subgraph RuntimeLoop ["Runtime Loop"]
         direction LR
-        R0["Runtime orchestrator"] --> R1["Fetch feature packet"]
-        R1 --> R2["Compute torque command"]
-        R2 --> R3["Enforce safety limits"]
-        R3 --> Rlog["Log features + torques"]
-        Rlog --> R4["Apply torques"]
-        R4 --> T["Scheduler"]
+        R0["RuntimeLoop.run"] --> R1["DataWrangler.get_sensor_data"]
+        R1 --> R2["Controller.compute_torque"]
+        R2 --> R3["SafetyManager.enforce"]
+        R3 --> Rlog["DiagnosticsSink.append"]
+        Rlog --> R4["Actuator.apply"]
+        R4 --> T["BaseScheduler.ticks"]
         T --> R0
     end
     style RuntimeLoop fill:#f0f5ff,stroke:#2b6cb0,stroke-width:2px
 
-    I4 --> R0
+    I3 --> R0
 ```
-
-### Layered responsibilities
-
-- **Configuration loader** parses the profile YAML, validates canonical signal
-  names, and reads two lists — `input_signals` and `output_signals` — which
-  define the fixed buffer ordering expected by the controller. This information
-  seeds the DataWrangler plan.
-- **DataWrangler plan** assigns each required input signal to a concrete sensor
-  modality, computes derived feature dependencies, and allocates a reusable
-  feature buffer following the configured `input_signals` order.
-- **Runtime loop** repeatedly asks the DataWrangler for the next feature packet,
-  computes torque commands, enforces safety limits, logs the features/torques,
-  and issues actuator commands while the scheduler holds the desired loop period.
-- **Diagnostics sink** receives run artefacts (merged logs, sensor timing,
-  safety events) so field deployments can be audited after the fact.
-
-### Input/Output signals
-
-To keep operator edits minimal, the profile declares just two ordered lists. The
-order of each list directly defines buffer indices for inputs and outputs:
-
-```yaml
-input_signals:  [knee_angle, knee_velocity, ankle_angle, ankle_velocity, grf_total]
-output_signals: [knee_torque, ankle_torque]
-```
-
-Notes:
-- These lists are canonical names only. No drivers, sensor types, defaults, or
-  actuator targets appear here.
-- Hardware mapping and any derived feature logic are internal to the runtime’s
-  plan; operators only maintain the signal names and their order.
 
 ### End-to-end data flow
 
@@ -106,22 +74,24 @@ actuator.
 
 ### DataWrangler interface
 
-- `start(controller_manifest, config_path)` — performs all build-time work:
-  parses configuration, validates canonical signals, resolves
-  `sensor_types`/`measured_signals`/`derived_signals`, allocates the reusable
-  feature buffer (aligned to the controller-requested order), opens sensor
-  contexts, primes diagnostics, and returns a readiness report. Any validation
-  or probe failure raises `HardwareAvailabilityError`.
-- `get_packet()` — populates the buffer for the latest tick and returns a
-  read-only view plus metadata (timestamps, staleness flags, defaults used).
-  Raises `SensorStaleDataError` when thresholds are exceeded (honouring the
-  configured `fault_strategy`) and bubbles `HardwareAvailabilityError` for
-  modality failures.
-- `close()` — tears down sensor contexts and flushes modality diagnostics.
+- `DataWrangler(required_inputs, hardware_map, *, diagnostics_sink=None)` —
+  constructor validates that each required canonical signal maps to a hardware
+  alias, allocates the feature buffer following `input_signals`, and wires up
+  SensorType wrappers. Validation failures raise `HardwareAvailabilityError`.
+- `probe()` — performs lightweight readiness checks (e.g., ensure `/dev`
+  entries or Bluetooth addresses exist, drivers can be imported) without
+  starting streams.
+- `start()` — opens all configured sensors, performs warm-up/calibration, and
+  readies the reusable feature buffer for runtime ticks.
+- `get_sensor_data()` — fetches the latest canonical values for the required
+  signals, populates the feature buffer in-place, and returns a read-only view
+  along with metadata (timestamps, staleness flags). Staleness raises
+  `SensorStaleDataError` by default.
+- `stop()` — stops all sensors and flushes modality diagnostics.
 
-Plan construction, buffer allocation, and other helpers remain internal to
-`start()`; the wrangler is single-threaded and must not mutate plan metadata
-once the loop begins so `get_packet()` can operate lock-free.
+Plan construction happens in the constructor. After `start()` succeeds, the
+wrangler is read-only; `get_sensor_data()` simply reuses the existing plan each
+tick.
 
 ### Controller contract
 
@@ -133,7 +103,7 @@ once the loop begins so `get_packet()` can operate lock-free.
   and must not mutate it.
 - Controllers propagate `ControllerFault` exceptions when they cannot produce a
   torque command (e.g., model runtime error). The runtime catches these and
-  transitions into a degraded or fault state depending on `fault_strategy`.
+  follows the configured failure policy (zero torque, optional retry, or exit).
 
 ### Feature buffer ownership
 
@@ -141,48 +111,45 @@ once the loop begins so `get_packet()` can operate lock-free.
   diagnostics, but only the wrangler writes into it.
 - Buffer indices are stable across the session; derived feature resolvers write
   directly to their assigned slots.
-- Each tick, the wrangler records presence/absence of optional channels so the
+- Each tick, the wrangler records presence/absence of optional signals so the
   diagnostics sink can report coverage (e.g., missing GRF sensor).
 
 ### Diagnostics sink contract
 
-- The runtime depends on an injectable `DiagnosticsSink` responsible solely for
-  runtime-level logging (feature packets, raw torques, safety-adjusted torques,
-  scheduler metrics).
+- The runtime depends on an injectable `DiagnosticsSink` backed by a
+  preallocated `pandas.DataFrame` indexed by time. Columns are derived from the
+  controller IO manifest so inbound rows are fixed-width.
 - Core interface:
-  - `log_tick(*, timestamp, feature_packet, torque_command_raw, torque_command_safe, scheduler)` —
-    invoked once per tick after the safety manager clamps outputs and before the
-    actuator runs. Diagnostics errors must never break the control loop; sinks
-    swallow/report internally.
-  - `flush()` — called during teardown to ensure any buffered artefacts reach
-    persistent storage.
+  - `DiagnosticsSink(columns, capacity, *, extra_columns=None)` — constructor
+    builds an empty DataFrame with a monotonic-time index and zero-filled data
+    block sized for the expected run length. Optional metadata columns (e.g.,
+    scheduler jitter) can be declared up front.
+  - `append(timestamp, data_array)` — invoked once per tick after safety
+    clamping. Writes the timestamp into the index and copies the dense
+    `numpy` array of feature/torque values into the preallocated columns.
+    Diagnostics must swallow/log errors so the control loop never breaks.
+  - `finalise()` — trims unused rows and returns/persists the DataFrame during
+    teardown.
 - The sink does not duplicate per-sensor or per-actuator diagnostics; those stay
-  with modality-specific loggers.
-- Implementations must be non-blocking: heavy IO should occur via buffered
-  appends or background workers so scheduler cadence remains stable.
+  with modality-specific loggers. Additional columns can be declared during
+  construction when extra metrics are needed.
 
-## Safety and runtime states
+## Safety behaviour
 
-The runtime behaves as a small state machine:
+The runtime loop does not maintain an explicit state machine. Execution is
+linear:
 
-1. **Initialising** — building the plan, probing hardware, zeroing sensors.
-   Failure exits to **Faulted**.
-2. **Calibration** — optional phase where `CalibrationRoutine` runs. Failure
-   either retries (bounded by `calibration.max_attempts`) or transitions to
-   **Degraded** with defaults.
-3. **Running** — controller torque computations succeed, scheduler cadence remains within tolerance.
-4. **Degraded** — non-critical sensor or actuator faults occur. Runtime keeps
-   looping but clamps torques to safe defaults and emits warnings; if the
-   failing component recovers before `recovery_timeout_s`, state returns to
-   **Running**.
-5. **Faulted** — critical failure (e.g., controller exception, actuator write
-   failure) or operator stop. Actuator receives `zero_torque` command before the
-   loop exits. Diagnostics flush state machine transitions for post-mortem
-   analysis.
+1. Build the DataWrangler plan and probe hardware readiness.
+2. Start sensors and actuator, then enter the scheduler loop.
+3. Each tick: fetch sensor data, compute torques, clamp via safety, command the
+   actuator.
+4. If any step raises (sensor stale, controller fault, actuator error), catch
+   the exception, emit zero torque, stop all hardware, finalise diagnostics, and
+   exit.
 
-The SafetyManager enforces torque limits per joint and records clamp events. It
-also exposes a `transition_to_safe_state()` hook for the runtime to invoke when
-entering **Faulted** so downstream hardware can coast safely.
+Torque limits and clamp counters remain an internal concern of the
+SafetyManager, but failures simply short-circuit execution; cleanup relies on
+structured `try/except/finally` blocks rather than explicit state transitions.
 
 ## Timing and concurrency
 
@@ -195,45 +162,41 @@ entering **Faulted** so downstream hardware can coast safely.
   - Controller compute duration (`compute_time_s`).
 - If a tick overruns (`dt_actual > dt_target + jitter_budget`), the runtime logs
   a timing warning. After `max_overruns_before_fault` consecutive overruns, the
-  runtime transitions to **Degraded**.
+  loop raises a scheduler fault and triggers the standard shutdown path.
 - Actuator commands are applied synchronously. If the actuator queue is
   asynchronous, the adapter must guarantee ordering and provide a completion
   callback for diagnostics.
 
 ## Diagnostics format
 
-- **Run log** (`run.log`): newline-delimited JSON. Each entry contains
-  `{timestamp, feature_packet, torque_command_raw, torque_command_safe, safety_events, scheduler}`.
-- **Sensors**: one file per sensor under `diagnostics/sensors/<name>.jsonl`
-  capturing `{timestamp, hz_estimate, stale_samples, defaults_applied}` and any
-  driver-specific metrics.
-- **Actuators**: `diagnostics/actuators/<name>.jsonl` with clamp counts,
-  commanded torques, and hardware faults.
-- **Scheduler**: `diagnostics/scheduler/loop_metrics.jsonl` summarising dt
-  history, compute durations, and overrun flags.
-- **Safety**: `diagnostics/safety/events.jsonl` listing clamp actions, limit
-  strategy results, and state transitions.
+- **Run log** (`run.log`): the primary pandas DataFrame persisted to disk
+  (Parquet/Feather/CSV). Each row includes `{timestamp, feature_packet,
+  torque_command_raw, torque_command_safe, scheduler_metrics, safety_metrics}`
+  plus any additional columns declared at sink construction.
+- **Diagnostics folder** (`diagnostics/`): optional supplemental artefacts such
+  as readiness reports or actuator fault summaries written as JSONL/CSV. All
+  files reside in this single directory with schema-versioned filenames (for
+  example, `diagnostics/actuator_faults_v1.jsonl`).
 
-All artefacts share a common schema version stamped in the header so downstream
-tools can evolve alongside the runtime.
+Downstream tooling monitors `run.log` and, when present, ingests additional
+files from `diagnostics/`. No per-component subdirectories are required.
 
 ## Failure and retry policy
 
 - **Sensor stale data**: Respect per-sensor `fault_strategy`.
-  - `raise`: bubble `SensorStaleDataError`, runtime enters **Faulted**.
-  - `warn`: log, substitute defaults, remain in current state.
-  - `fallback`: switch to synthetic sample (held last good value or zero) and
-    enter **Degraded** until fresh data returns.
-- **Derived signal failure**: if a resolver cannot compute a signal (missing
-  dependency), treat as sensor stale. Derived failures are attributed to the
-  originating modality for diagnostics.
-- **Controller exceptions**: transition to **Faulted**, zero actuator, flush
-  logs, and rethrow unless `controller.retry_on_failure` is enabled (bounded
-  retries with exponential backoff).
-- **Actuator errors**: first failure triggers **Degraded**; actuators must
-  report `recoverable` vs `fatal`. Fatal errors move to **Faulted** immediately.
-- **Configuration mismatches**: detected during `build_plan()` and abort before
-  initialisation.
+  - `raise`: bubble `SensorStaleDataError`, trigger cleanup/exit.
+  - `warn`: log, substitute defaults for this tick, continue.
+  - `fallback`: use synthetic samples (held last good value or zero) until fresh
+    data returns; diagnostics record the substitution.
+- **Derived signal failure**: treat as sensor stale; attribute to the originating
+  modality in diagnostics.
+- **Controller exceptions**: catch, emit zero torque, stop hardware, finalise
+  diagnostics, and exit unless the controller declares a bounded retry policy.
+- **Actuator errors**: catch, zero torque, stop hardware, surface diagnostics,
+  and exit. Hardware adapters may classify recoverable vs fatal, but recovery
+  happens outside the runtime loop.
+- **Configuration mismatches**: detected during plan construction; abort before
+  starting hardware.
 
 ## Sequence
 
@@ -271,13 +234,13 @@ sequenceDiagram
 
 **Validation guarantees**
 
-- Every required controller channel must have at least one compatible provider.
-- Optional channels may be satisfied by hardware or by defaults declared in the
+- Every required controller signal must have at least one compatible provider.
+- Optional signals may be satisfied by hardware or by defaults declared in the
   profile.
 - Derived signals express their dependencies explicitly, so the plan fails early
   if prerequisites are unavailable.
 - Probe failures bubble back up before the runtime loop starts, allowing the
-  operator to replace hardware or switch to a degraded profile.
+  operator to fix hardware or choose a different profile before running.
 
 ### Control loop cadence
 
@@ -291,9 +254,9 @@ sequenceDiagram
     participant Safety as SafetyManager
     participant Actuator
     participant Diagnostics as DiagnosticsSink
-
+    
     Scheduler->>Runtime: tick(start_time)
-    Runtime->>Wrangler: get_packet()
+    Runtime->>Wrangler: get_sensor_data()
     Wrangler->>SensorType: fetch(required signals)
     SensorType-->>Wrangler: canonical sample
     Wrangler-->>Runtime: feature vector
@@ -301,21 +264,17 @@ sequenceDiagram
     Controller-->>Runtime: TorqueCommand
     Runtime->>Safety: enforce(TorqueCommand)
     Safety-->>Runtime: SafeTorqueCommand
-    Runtime->>Diagnostics: log_tick(features, TorqueCommand, SafeTorqueCommand)
-    Runtime->>Actuator: apply(SafeTorqueCommand)
-    Runtime->>Scheduler: report(dt_actual, compute_time)
-    Scheduler-->>Scheduler: record diagnostics
-    alt stale or fault
-        Wrangler-->>Runtime: raises SensorStaleDataError
-        Runtime->>Safety: transition_to_safe_state()
-    end
+    Runtime->>Diagnostics: append(timestamp, data_array)
+   Runtime->>Actuator: apply(SafeTorqueCommand)
+   Runtime->>Scheduler: report(dt_actual, compute_time)
+   Scheduler-->>Scheduler: record diagnostics
+    Note over Runtime,Safety: Exceptions -> zero torque + stop hardware
 ```
 
 The runtime records per-tick timing, the full feature packet, and torque
 commands both before and after safety enforcement. Actuators are allowed to
 raise hardware faults after a command is applied; the runtime catches them and
-decides whether to stop the loop or continue in a degraded mode depending on the
-profile fault strategy.
+either retries (if configured) or shuts down cleanly per the failure policy.
 
 ## UML
 
@@ -323,63 +282,41 @@ profile fault strategy.
 
 ```mermaid
 classDiagram
-    class BaseSensorConfig {
-      +max_stale_samples: int
-      +max_stale_time_s: float
-      +fault_strategy: str
-      +diagnostics_window: int
-    }
-    class SensorDiagnostics {
-      +last_timestamp: float?
-      +hz_estimate: float?
-      +hz_min/hz_max/hz_mean: float?
-      +stale_samples: int
-      +total_samples: int
-      +recent_sample_periods: (float,)
-    }
     class BaseSensor {
       +__enter__() BaseSensor
       +__exit__()
       +start()*
       +stop()*
-      +read_native()*
-      +diagnostics: SensorDiagnostics
-      +config: BaseSensorConfig
-    }
-    class SensorTypeBase {
-      +name: str
-      +drivers: [SensorHardwareDriver]
-      +pipeline: SignalPipeline
-      +provided_signals(): set[str]
-      +can_provide(signals): CapabilityReport
-      +probe_hardware(signals): ReadinessReport
-      +read(signals): dict[str, float]
+      +read(): CanonicalSample*
     }
     class SensorHardwareDriver {
       +start()*
       +stop()*
-      +probe_hardware(requirements)*
-      +read_native(): RawSample*
-      +diagnostics: Mapping
+      +probe(): HardwareProbe
+      +read_raw(): RawSample*
     }
-    class SignalPipeline {
-      +resolvers: [SignalResolver]
-      +resolve(requested, providers)
+    class SensorTypeBase {
+      +name: str
+      +drivers: dict[str, SensorHardwareDriver]
+      +required_signals: set[str]
+      +optional_signals: set[str]
+      +probe(): HardwareProbe
+      +start()
+      +stop()
+      +read(signals): dict[str, float]
     }
     class DataWrangler {
-      +required_inputs: list[str]
-      +feature_order: list[str]
-      +feature_buffer: array
-      +plan: FeaturePlan
-      +validate_plan()
-      +get_packet(): FeatureView
-      +write_log(sample)
+      +required_inputs: tuple[str, ...]
+      +feature_buffer: FeatureBuffer
+      +sensors: dict[str, SensorTypeBase]
+      +probe()
+      +start()
+      +get_sensor_data(): FeatureView
+      +stop()
     }
 
-    BaseSensor <|-- SensorHardwareDriver
     SensorTypeBase *-- SensorHardwareDriver : owns
-    SensorTypeBase *-- SignalPipeline
-    SignalPipeline ..> SensorHardwareDriver : pulls measurements
+    SensorTypeBase --> BaseSensor : wraps
     DataWrangler *-- SensorTypeBase : owns
     DataWrangler --> SensorTypeBase : fetches signals
 ```
@@ -422,10 +359,10 @@ classDiagram
       +diagnostics: Mapping
     }
     class DiagnosticsSink {
-      +log_run_packet(packet)
-      +write_sensor_metrics(sensor, diagnostics)
-      +write_actuator_metrics(actuator, diagnostics)
-      +write_scheduler_metrics(history)
+      +columns: list[str]
+      +frame: pandas.DataFrame
+      +append(timestamp, data_array)
+      +finalise() pandas.DataFrame
     }
 
     Runtime *-- BaseScheduler
@@ -446,78 +383,79 @@ report diagnostics in the documented format.
 
 ### `hardware_config.yaml` layout
 
-All runtime wiring lives in a single YAML document. The loader validates the
-following top-level keys:
+All runtime wiring lives in a single YAML document. To make operator edits
+simple while keeping hardware details explicit, the top-level structure is
+organised around ordered signals and a compact hardware table:
 
 | Key | Required | Purpose |
 |-----|----------|---------|
-| `defaults` | optional | Global configuration such as numeric dtype, fault strategy, and diagnostic paths. |
-| `drivers` | required | Mapping of driver identifiers to import paths and keyword arguments. |
-| `sensor_types` | required | Logical sensors (e.g., `imu`, `vertical_grf`) composed from one or more drivers with derived signal rules. |
-| `measured_signals` | required | Canonical signal → provider mapping that resolves controller inputs against sensor types. |
-| `derived_signals` | optional | Additional canonical signals computed from prerequisites; evaluated by the DataWrangler pipeline. |
-| `controllers` | required | Controller bundles that declare input/output schemas, torque model implementations, and configuration. |
-| `actuators` | required | Actuator adapters and their bindings to controller outputs. |
-| `safety` | optional | Limit definitions (per joint torque caps, fault strategies, watchdog timeouts). |
-| `diagnostics` | optional | Paths or sinks for runtime artefacts (log roots, retention windows). |
+| `input_signals` | required | Ordered canonical inputs that define the feature buffer order. Each entry references a hardware alias and may include per-signal config overrides (e.g., required flags). |
+| `output_signals` | required | Ordered canonical outputs that define the torque buffer order. Each entry targets an actuator alias. |
+| `hardware` | required | Table mapping friendly hardware aliases to sensor/actuator classes and their config (e.g., ports). Signals reference these aliases to avoid verbosity. |
+| `controllers` | required | Controller bundles with implementation, joints, config, and optional torque model. |
+| `safety` | optional | Limit definitions (per-joint torque caps, fault strategies, watchdog timeouts). |
+| `diagnostics` | optional | Sinks/paths for runtime artefacts (log roots, retention windows). |
 
-The DataWrangler consumes `sensor_types`, `measured_signals`, and
-`derived_signals` to build its feature plan. Controllers reference canonical
-signal names exposed in `measured_signals` (and possibly defaults); actuators
-declare which canonical torques they accept.
+Notes:
+- No separate `drivers`, `sensor_types`, `measured_signals`, or `derived_signals`
+  sections are needed. Any derivation is the responsibility of the SensorType
+  implementation; configuration simply names the canonical signal and the
+  hardware alias that provides it.
+- The order of `input_signals` and `output_signals` is the canonical buffer
+  order consumed/emitted by the controller.
 
 ### Example configuration
 
 ```yaml
-defaults:
-  dtype: float32
-  fault_strategy: raise
-  feature_order: ["hip_angle", "hip_velocity", "knee_angle", "knee_velocity"]
-  log_root: /var/log/rpc_runtime
+profile:
+  name: right_leg
+  controller: pi_right_leg
 
-drivers:
-  imu_microstrain:
-    class: rpc_runtime.sensors.imu.microstrain_3dm_gx5.Microstrain3DMGX5IMU
-    config:
-      port_map:
-        thigh: /dev/ttyIMU_thigh
-        shank: /dev/ttyIMU_shank
-      max_stale_samples: 3
-  fsr_bluetooth:
-    class: rpc_runtime.sensors.grf.fsr.BluetoothFSR
-    config:
-      address: E8:EA:71:E8:37:D1
+# Ordered inputs/outputs define buffer indices for the controller
+input_signals:
+  - { name: hip_flexion_angle_ipsi_rad,        hardware: imu_serial }
+  - { name: hip_flexion_velocity_ipsi_rad_s,   hardware: imu_serial }
+  - { name: knee_flexion_angle_ipsi_rad,       hardware: imu_bt }
+  - { name: knee_flexion_velocity_ipsi_rad_s,  hardware: imu_bt }
+  - { name: vertical_grf_ipsi_N,               hardware: grf,          required: false }
 
-sensor_types:
-  imu:
-    drivers: ["imu_microstrain"]
-    provides:
-      measured: ["thigh_angle", "thigh_velocity", "shank_angle", "shank_velocity"]
-      derived:
-        knee_angle:
-          requires: ["thigh_angle", "shank_angle"]
-          resolver: rpc_runtime.sensors.resolvers.JointDifference
-  vertical_grf:
-    drivers: ["fsr_bluetooth"]
-    provides:
-      measured: ["grf_total"]
+output_signals:
+  - { name: hip_flexion_moment_ipsi_Nm,  hardware: leg_actuator }
+  - { name: knee_flexion_moment_ipsi_Nm, hardware: leg_actuator }
 
-measured_signals:
-  hip_angle: { provider: imu, alias: thigh_angle }
-  hip_velocity: { provider: imu, alias: thigh_velocity }
-  knee_angle: { provider: imu }
-  knee_velocity: { provider: imu, alias: shank_velocity }
-  grf_total: { provider: vertical_grf, required: false, default: 0.0 }
+# Compact hardware table avoids repeating class strings and ports per signal
+hardware:
+  sensors:
+    imu_serial:
+      class: rpc_runtime.sensors.imu.microstrain_3dm_gx5.Microstrain3DMGX5IMU
+      config:
+        port_map:
+          thigh: /dev/ttyIMU_thigh
+          shank: /dev/ttyIMU_shank
+        calibration_samples: 500
+        calibration_interval_s: 0.002
+    imu_bt:
+      class: rpc_runtime.sensors.imu.bluetooth.BluetoothIMU  # example Bluetooth adapter
+      config:
+        address_map:
+          thigh: E8:EA:71:E8:37:D1
+          shank: E8:EA:71:E8:37:D2
+        connection_timeout_s: 2.0
+    grf:
+      class: rpc_runtime.sensors.grf.fsr.BluetoothFSR
+      config:
+        address: E8:EA:71:E8:37:D1
+
+  actuators:
+    leg_actuator:
+      class: rpc_runtime.actuators.osl_actuator.OSLActuator
+      port: /dev/ttyACM0
+      config: {}
 
 controllers:
   pi_right_leg:
     implementation: rpc_runtime.controllers.pi_controller.PIController
-    input_schema: ["hip_angle", "hip_velocity", "knee_angle", "knee_velocity", "grf_total"]
-    output_schema: ["hip_torque", "knee_torque"]
-    torque_model:
-      implementation: rpc_runtime.controllers.torque_models.torchscript.TorchScriptTorqueModel
-      config:
-        bundle_path: /opt/models/right_leg.ts
+    joints: ["hip", "knee"]
     config:
       dt: 0.002
       torque_scale: 1.0
@@ -527,24 +465,15 @@ controllers:
       gains:
         kp: { hip: 14.0, knee: 18.0 }
         ki: { hip: 1.0, knee: 1.2 }
-
-actuators:
-  osl_leg:
-    driver: rpc_runtime.actuators.osl_actuator.OSLActuator
-    config:
-      device: /dev/ttyACM0
-    accepts:
-      hip_torque: hip
-      knee_torque: knee
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.torchscript.TorchScriptTorqueModel
+      config:
+        bundle_path: /opt/models/right_leg.ts
 
 safety:
   limits:
-    hip:
-      max_torque_nm: 70.0
-      clamp_strategy: saturate
-    knee:
-      max_torque_nm: 80.0
-      clamp_strategy: saturate
+    hip:  { max_torque_nm: 70.0, clamp_strategy: saturate }
+    knee: { max_torque_nm: 80.0, clamp_strategy: saturate }
   watchdog:
     max_tick_hz_delta: 0.0005
 
@@ -555,30 +484,38 @@ diagnostics:
       history: 14d
 ```
 
-### Canonical signals and derived features
+To switch from the serial IMU to the Bluetooth variant, change the
+`hardware` alias in each IMU-related `input_signals` entry from `imu_serial` to
+`imu_bt`. The canonical signal names and ordering stay unchanged.
+
+### Canonical signals and derivation
 
 - Canonical names are registered centrally so controllers and hardware share the
-  same vocabulary (`hip_angle`, `grf_total`, `knee_torque`, etc.).
-- `measured_signals` entries may alias raw sensor outputs when the canonical
-  name differs from the hardware-provided label.
-- Each `derived` resolver declares `requires` so the DataWrangler can ensure all
-  prerequisites are available before runtime.
-- Defaults cover optional signals: if hardware is missing, the DataWrangler
-  drops the measurement and populates the feature buffer with the configured
-  fallback value.
+  same vocabulary (`hip_flexion_angle_ipsi_rad`, `vertical_grf_ipsi_N`,
+  `knee_flexion_moment_ipsi_Nm`, etc.).
+- Derivation is handled inside the SensorType implementation (e.g., IMU may
+  compute `knee_flexion_angle_ipsi_rad` from segment angles). The configuration does not declare
+  resolvers — it only maps signals to hardware aliases.
+- Optional inputs are marked on `input_signals` entries (e.g., `required: false`).
+  Absence is handled by runtime policy rather than config-level defaults.
+
+Note: Canonical signal names and ordering are defined in the separate LocoHub
+library and imported by this runtime. Adopt LocoHub conventions rather than
+duplicating definitions here. See LocoHub/src/locohub/README.md (e.g.,
+`locohub.feature_constants`) for the authoritative registry and feature
+ordering.
 
 ### Calibration, diagnostics, and artefacts
 
-- Calibration routines run immediately after sensors start while the runtime is
-  in the **Calibration** state. Sensors that expose `zero()` opt into the hook;
-  retry counts and failure handling are governed by `calibration.*` defaults.
-- Diagnostics write into `diagnostics/<category>/` under the configured log
-  root using newline-delimited JSON (`*.jsonl`). Categories mirror the
-  Diagnostics format section above so tooling can rely on consistent schema
-  versions.
-- Each runtime session emits a `run.log` file (also JSONL) containing
-  time-aligned feature packets, commanded torques, scheduler jitter, and
-  safety-state transitions.
+- Calibration routines run immediately after sensors start during the
+  calibration step. Sensors that expose `zero()` opt into the hook; retry counts
+  and failure handling are governed by `calibration.*` defaults.
+- Diagnostics write into a single `diagnostics/` directory under the configured
+  log root. Files are JSONL/CSV snapshots (readiness reports, actuator summaries)
+  with schema-versioned filenames so tooling can evolve alongside the runtime.
+- Each runtime session emits `run.log` (the pandas DataFrame persisted to disk,
+  e.g., Parquet) containing time-aligned feature packets, commanded torques,
+  scheduler jitter, and shutdown events.
 
 ### Extensibility checklist
 
@@ -587,14 +524,14 @@ To add a new modality or actuator:
 1. Implement the abstract methods shown in the UML diagrams and honour the
    component contracts described above.
 2. Register any new canonical signals with documentation and defaults.
-3. Add driver entries under `drivers` and expose them through `sensor_types`,
-   including capability probes and diagnostics exports.
-4. Declare derived signal resolvers if the modality synthesises new channels and
-   document their failure behaviour.
-5. Extend `hardware_config.yaml` to map controller schema channels to the new
-   providers and update `FeaturePlan` validation tests.
-6. Provide calibration hooks or defaults so the **Calibration** state can
-   execute cleanly.
+3. Register the hardware alias and class under `hardware.sensors` or
+   `hardware.actuators` and map signals under `input_signals`/`output_signals`.
+4. If the modality synthesises signals, implement derivation inside the sensor
+   type; no config changes beyond signal mapping are required.
+5. Update `input_signals`/`output_signals` ordering or joints as needed and
+   update `FeaturePlan` validation tests.
+6. Provide calibration hooks or defaults so the calibration step can execute
+   cleanly.
 7. Emit diagnostics in the documented JSONL format and bump schema versions when
    fields change.
 8. Update the failure policy documentation or defaults if the new component
