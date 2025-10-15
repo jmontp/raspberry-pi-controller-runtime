@@ -66,13 +66,18 @@ class LowPassFilter:
 class PIController:
     """Composable PI controller with torque model feedforward."""
 
-    # Canonical feature names corresponding to joint measurements in LocoHub.
-    JOINT_ANGLE_FEATURES = {
+    # Canonical mappings from torque outputs to sensor features.
+    TORQUE_TO_ANGLE = {
+        "knee_flexion_moment_ipsi_Nm": "knee_flexion_angle_ipsi_rad",
+        "ankle_dorsiflexion_moment_ipsi_Nm": "ankle_dorsiflexion_angle_ipsi_rad",
+        # Legacy joint names
         "knee": "knee_flexion_angle_ipsi_rad",
         "ankle": "ankle_dorsiflexion_angle_ipsi_rad",
     }
-    JOINT_DESIRED_ANGLE_FEATURES = {
-        # Desired setpoint features, when available.
+    TORQUE_TO_DESIRED_ANGLE = {
+        "knee_flexion_moment_ipsi_Nm": "knee_flexion_angle_desired_ipsi_rad",
+        "ankle_dorsiflexion_moment_ipsi_Nm": "ankle_dorsiflexion_angle_desired_ipsi_rad",
+        # Legacy joint names
         "knee": "knee_flexion_angle_desired_ipsi_rad",
         "ankle": "ankle_dorsiflexion_angle_desired_ipsi_rad",
     }
@@ -130,21 +135,19 @@ class PIController:
         torque_ff = self._torque_model.run(dict(feature_map))
         torques: Dict[str, float] = {}
         for joint in self._config.joints:
-            angle_key = self.JOINT_ANGLE_FEATURES.get(joint, f"{joint}_angle")
-            desired_key = self.JOINT_DESIRED_ANGLE_FEATURES.get(joint, f"{joint}_desired_angle")
-            meas = float(
-                feature_map.get(
-                    angle_key,
-                    feature_map.get(f"{joint}_angle", 0.0),
-                )
-            )
-            ref = feature_map.get(desired_key)
-            if ref is None:
-                ref = feature_map.get(f"{joint}_desired_angle")
-            if ref is None:
+            angle_key = self.TORQUE_TO_ANGLE.get(joint)
+            raw_meas = feature_map.get(angle_key) if angle_key else feature_map.get(joint)
+            meas = float(raw_meas) if raw_meas is not None else 0.0
+
+            desired_key = self.TORQUE_TO_DESIRED_ANGLE.get(joint)
+            ref_value = feature_map.get(desired_key) if desired_key else None
+            if ref_value is None and angle_key:
+                fallback_desired = f"{angle_key}_desired"
+                ref_value = feature_map.get(fallback_desired)
+            if ref_value is None:
                 ref = meas
             else:
-                ref = float(ref)
+                ref = float(ref_value)
             error = ref - meas
             integral = self._integral_error[joint] + error * self._config.dt
             self._integral_error[joint] = integral

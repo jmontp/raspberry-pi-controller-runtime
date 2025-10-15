@@ -33,7 +33,20 @@ RuntimeProfile = ProfileModel
 # Data models
 # ---------------------------------------------------------------------------
 
-
+def _canonicalize_side_name(name: str) -> str:
+    """Map *_right/*_left aliases to canonical ipsi/contra names."""
+    if not isinstance(name, str):
+        return name
+    replacements = [
+        ("_right_", "_ipsi_"),
+        ("_left_", "_contra_"),
+        ("_right", "_ipsi"),
+        ("_left", "_contra"),
+    ]
+    canonical = name
+    for old, new in replacements:
+        canonical = canonical.replace(old, new)
+    return canonical
 
 
 @dataclass(slots=True)
@@ -96,7 +109,8 @@ def _load_structured_profile(
     for idx, entry in enumerate(input_signals_raw):
         if not isinstance(entry, Mapping):
             raise ValueError(f"'input_signals' entry #{idx} must be a mapping")
-        signal_name = entry.get("name") or entry.get("signal")
+        signal_name_raw = entry.get("name") or entry.get("signal")
+        signal_name = _canonicalize_side_name(str(signal_name_raw)) if signal_name_raw else None
         if signal_name is None:
             raise ValueError(f"'input_signals' entry #{idx} missing 'name'")
         hardware_alias_raw = entry.get("hardware")
@@ -109,10 +123,10 @@ def _load_structured_profile(
                 raise ValueError(
                     f"'input_signals' entry #{idx} references unknown sensor alias '{provider}'"
                 )
-        required = bool(entry.get("required", True))
-        default_value = entry.get("default", 0.0)
-        if default_value is None:
-            default_value = 0.0
+        required_flag = entry.get("required")
+        raw_default = entry.get("default")
+        required = bool(required_flag) if required_flag is not None else raw_default is None
+        default_value = raw_default if raw_default is not None else 0.0
         try:
             default_numeric = float(default_value)
         except (TypeError, ValueError) as exc:
@@ -128,13 +142,13 @@ def _load_structured_profile(
         )
         signal_routes.append(
             SignalRoute(
-                name=str(signal_name),
+                name=signal_name,
                 provider=provider,
                 default=default_numeric,
             )
         )
         if provider is not None:
-            sensor_signal_map[provider].append(str(signal_name))
+            sensor_signal_map[provider].append(signal_name)
             if required:
                 sensor_required_map[provider] = True
 
@@ -149,10 +163,11 @@ def _load_structured_profile(
     for idx, entry in enumerate(output_signals_raw):
         if not isinstance(entry, Mapping):
             raise ValueError(f"'output_signals' entry #{idx} must be a mapping")
-        signal_name = entry.get("name") or entry.get("signal")
+        signal_name_raw = entry.get("name") or entry.get("signal")
         hardware_alias = entry.get("hardware")
-        if signal_name is None:
+        if signal_name_raw is None:
             raise ValueError(f"'output_signals' entry #{idx} missing 'name'")
+        signal_name = _canonicalize_side_name(str(signal_name_raw))
         if hardware_alias is None:
             raise ValueError(f"'output_signals' entry #{idx} missing 'hardware'")
         hardware_alias = str(hardware_alias)
@@ -160,8 +175,8 @@ def _load_structured_profile(
             raise ValueError(
                 f"'output_signals' entry #{idx} references unknown actuator alias '{hardware_alias}'"
             )
-        output_schema_signals.append(SchemaSignal(name=str(signal_name), required=True))
-        actuator_signal_map[hardware_alias].append(str(signal_name))
+        output_schema_signals.append(SchemaSignal(name=signal_name, required=True))
+        actuator_signal_map[hardware_alias].append(signal_name)
 
     output_schema_name = f"{profile_name}_outputs"
     output_schema = InputSchema(name=output_schema_name, signals=tuple(output_schema_signals))
@@ -345,28 +360,51 @@ def _parse_controllers(
                     f"Controller '{name}' references unknown output schema '{output_schema_name}'"
                 )
             output_schema = schemas[str(output_schema_name)]
-        joints = mapping.get("joints")
-        if not isinstance(joints, list) or not joints:
+        joints_raw = mapping.get("joints")
+        if not isinstance(joints_raw, list) or not joints_raw:
             raise ValueError(f"Controller '{name}' must define non-empty 'joints'")
+        joints = tuple(_canonicalize_side_name(str(joint)) for joint in joints_raw)
         manifest = ControllerManifest(
             name=str(name),
             input_schema=input_schema,
             output_schema=output_schema,
-            joints=tuple(str(joint) for joint in joints),
+            joints=joints,
             description=(mapping.get("description") or None),
         )
         config_payload = mapping.get("config", {})
         if not isinstance(config_payload, Mapping):
             raise ValueError(f"Controller '{name}' config must be a mapping")
+        config_dict: dict[str, Any] = dict(config_payload)
+        gains_payload = config_dict.get("gains")
+        if isinstance(gains_payload, Mapping):
+            canonical_gains: dict[str, dict[str, Any]] = {}
+            for gain_name, gain_values in gains_payload.items():
+                if isinstance(gain_values, Mapping):
+                    canonical_gains[gain_name] = {
+                        _canonicalize_side_name(str(key)): value
+                        for key, value in gain_values.items()
+                    }
+                else:
+                    canonical_gains[gain_name] = gain_values
+            config_dict["gains"] = canonical_gains
         torque_model_payload = mapping.get("torque_model")
         if torque_model_payload is not None and not isinstance(torque_model_payload, Mapping):
             raise ValueError(f"Controller '{name}' torque_model must be a mapping")
+        torque_model_dict = None
+        if torque_model_payload:
+            torque_model_dict = dict(torque_model_payload)
+            outputs_payload = torque_model_dict.get("outputs")
+            if isinstance(outputs_payload, Mapping):
+                torque_model_dict["outputs"] = {
+                    _canonicalize_side_name(str(key)): value
+                    for key, value in outputs_payload.items()
+                }
         controllers[str(name)] = ControllerBundle(
             name=str(name),
             implementation=str(implementation),
             manifest=manifest,
-            config=dict(config_payload),
-            torque_model=dict(torque_model_payload) if torque_model_payload else None,
+            config=config_dict,
+            torque_model=torque_model_dict,
         )
     return controllers
 

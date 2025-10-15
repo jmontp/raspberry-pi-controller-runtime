@@ -4,34 +4,96 @@ profile:
 
 # Canonical signal ordering for the runtime buffers
 input_signals:
-  - { name: knee_flexion_angle_ipsi_rad, hardware: imu }
-  - { name: knee_flexion_velocity_ipsi_rad_s, hardware: imu }
-  - { name: ankle_dorsiflexion_angle_ipsi_rad, hardware: imu }
-  - { name: ankle_dorsiflexion_velocity_ipsi_rad_s, hardware: imu }
-  - { name: vertical_grf_ipsi_N, hardware: vertical_grf, required: false, default: 0.0 }
+  # Joint angles (rad)
+  - { name: hip_flexion_angle_ipsi_rad, hardware: imu_mock, required: false }
+  - { name: hip_flexion_angle_contra_rad, hardware: imu_mock, required: false }
+  - { name: knee_flexion_angle_ipsi_rad, hardware: imu_mock }
+  - { name: knee_flexion_angle_contra_rad, hardware: imu_mock, required: false }
+  - { name: ankle_dorsiflexion_angle_ipsi_rad, hardware: imu_mock }
+  - { name: ankle_dorsiflexion_angle_contra_rad, hardware: imu_mock, required: false }
+
+  # Joint angular velocities (rad/s)
+  - { name: hip_flexion_velocity_ipsi_rad_s, hardware: imu_mock, required: false }
+  - { name: hip_flexion_velocity_contra_rad_s, hardware: imu_mock, required: false }
+  - { name: knee_flexion_velocity_ipsi_rad_s, hardware: imu_mock }
+  - { name: knee_flexion_velocity_contra_rad_s, hardware: imu_mock, required: false }
+  - { name: ankle_dorsiflexion_velocity_ipsi_rad_s, hardware: imu_mock }
+  - { name: ankle_dorsiflexion_velocity_contra_rad_s, hardware: imu_mock, required: false }
+
+  # Segment orientations (rad)
+  - { name: pelvis_sagittal_angle_rad, hardware: imu_mock, required: false }
+  - { name: pelvis_frontal_angle_rad, hardware: imu_mock, required: false }
+  - { name: pelvis_transverse_angle_rad, hardware: imu_mock, required: false }
+  - { name: trunk_sagittal_angle_rad, hardware: imu_mock, required: false }
+  - { name: trunk_frontal_angle_rad, hardware: imu_mock, required: false }
+  - { name: trunk_transverse_angle_rad, hardware: imu_mock, required: false }
+  - { name: thigh_sagittal_angle_ipsi_rad, hardware: imu_mock, required: false }
+  - { name: thigh_sagittal_angle_contra_rad, hardware: imu_mock, required: false }
+  - { name: shank_sagittal_angle_ipsi_rad, hardware: imu_mock, required: false }
+  - { name: shank_sagittal_angle_contra_rad, hardware: imu_mock, required: false }
+  - { name: foot_sagittal_angle_ipsi_rad, hardware: imu_mock, required: false }
+  - { name: foot_sagittal_angle_contra_rad, hardware: imu_mock, required: false }
+
+  # Segment angular velocities (rad/s)
+  - { name: pelvis_sagittal_velocity_rad_s, hardware: imu_mock, required: false }
+  - { name: pelvis_frontal_velocity_rad_s, hardware: imu_mock, required: false }
+  - { name: pelvis_transverse_velocity_rad_s, hardware: imu_mock, required: false }
+  - { name: trunk_sagittal_velocity_rad_s, hardware: imu_mock, required: false }
+  - { name: trunk_frontal_velocity_rad_s, hardware: imu_mock, required: false }
+  - { name: trunk_transverse_velocity_rad_s, hardware: imu_mock, required: false }
+  - { name: thigh_sagittal_velocity_ipsi_rad_s, hardware: imu_mock, required: false }
+  - { name: thigh_sagittal_velocity_contra_rad_s, hardware: imu_mock, required: false }
+  - { name: shank_sagittal_velocity_ipsi_rad_s, hardware: imu_mock, required: false }
+  - { name: shank_sagittal_velocity_contra_rad_s, hardware: imu_mock, required: false }
+  - { name: foot_sagittal_velocity_ipsi_rad_s, hardware: imu_mock, required: false }
+  - { name: foot_sagittal_velocity_contra_rad_s, hardware: imu_mock, required: false }
+
+  # Ground reaction forces (N)
+  - { name: vertical_grf_ipsi_N, hardware: vertical_grf_mock, required: false }
+  - { name: vertical_grf_contra_N, hardware: vertical_grf_mock, required: false }
+  - { name: anterior_grf_ipsi_N, hardware: vertical_grf_mock, required: false }
+  - { name: anterior_grf_contra_N, hardware: vertical_grf_mock, required: false }
+  - { name: lateral_grf_ipsi_N, hardware: vertical_grf_mock, required: false }
+  - { name: lateral_grf_contra_N, hardware: vertical_grf_mock, required: false }
+
+  # Normalised ground reaction forces (body weight)
+  - { name: vertical_grf_ipsi_BW, hardware: vertical_grf_mock, required: false }
+  - { name: vertical_grf_contra_BW, hardware: vertical_grf_mock, required: false }
+  - { name: anterior_grf_ipsi_BW, hardware: vertical_grf_mock, required: false }
+  - { name: anterior_grf_contra_BW, hardware: vertical_grf_mock, required: false }
+  - { name: lateral_grf_ipsi_BW, hardware: vertical_grf_mock, required: false }
+  - { name: lateral_grf_contra_BW, hardware: vertical_grf_mock, required: false }
+
+  # Centre of pressure (m)
+  - { name: cop_anterior_ipsi_m, hardware: vertical_grf_mock, required: false }
+  - { name: cop_anterior_contra_m, hardware: vertical_grf_mock, required: false }
+  - { name: cop_lateral_ipsi_m, hardware: vertical_grf_mock, required: false }
+  - { name: cop_lateral_contra_m, hardware: vertical_grf_mock, required: false }
+  - { name: cop_vertical_ipsi_m, hardware: vertical_grf_mock, required: false }
+  - { name: cop_vertical_contra_m, hardware: vertical_grf_mock, required: false }
 
 output_signals:
-  - { name: knee_flexion_moment_ipsi_Nm, hardware: mock_actuator }
-  - { name: ankle_dorsiflexion_moment_ipsi_Nm, hardware: mock_actuator }
+  - { name: knee_flexion_moment_ipsi_Nm, hardware: actuator_mock }
+  - { name: ankle_dorsiflexion_moment_ipsi_Nm, hardware: actuator_mock }
 
 hardware:
   sensors:
-    imu:
+    imu_mock:
       class: rpc_runtime.sensors.imu.mock.MockIMU
       config:
         loop: true
-    vertical_grf:
+    vertical_grf_mock:
       class: rpc_runtime.sensors.grf.mock.MockVerticalGRF
       config: {}
   actuators:
-    mock_actuator:
+    actuator_mock:
       class: rpc_runtime.actuators.mock.MockActuator
       config: {}
 
 controllers:
   pi_mock:
     implementation: rpc_runtime.controllers.pi_controller.PIController
-    joints: ["knee", "ankle"]
+    joints: ["knee_flexion_moment_ipsi_Nm", "ankle_dorsiflexion_moment_ipsi_Nm"]
     description: "Mock PI controller bundle for development and testing."
     config:
       dt: 0.01
@@ -39,14 +101,14 @@ controllers:
       torque_limit_nm: 10.0
       gains:
         kp:
-          knee: 0.0
-          ankle: 0.0
+          knee_flexion_moment_ipsi_Nm: 0.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
         ki:
-          knee: 0.0
-          ankle: 0.0
+          knee_flexion_moment_ipsi_Nm: 0.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
     torque_model:
       implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
       config:
         outputs:
-          knee: 0.0
-          ankle: 0.0
+          knee_flexion_moment_ipsi_Nm: 0.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.0

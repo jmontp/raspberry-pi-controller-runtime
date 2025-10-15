@@ -3,18 +3,21 @@
 import pytest
 
 from rpc_runtime.actuators.mock import MockActuator
+from rpc_runtime.config.models import SignalRoute
 from rpc_runtime.controllers.pi_controller import (
     PIController,
     PIControllerConfig,
     PIControllerGains,
 )
-from rpc_runtime.config.models import SignalRoute
 from rpc_runtime.controllers.torque_models.mock import MockTorqueModel
 from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.runtime.wrangler import InputSchema, SchemaSignal
 from rpc_runtime.sensors.grf.mock import MockVerticalGRF
 from rpc_runtime.sensors.imu.base import BaseIMUConfig, IMUSample, IMUStaleDataError
 from rpc_runtime.sensors.imu.mock import MockIMU
+
+KNEE_TORQUE = "knee_flexion_moment_ipsi_Nm"
+ANKLE_TORQUE = "ankle_dorsiflexion_moment_ipsi_Nm"
 
 
 def test_controller_with_mock_devices() -> None:
@@ -31,17 +34,17 @@ def test_controller_with_mock_devices() -> None:
     assert set(mock_imu.segment_names).issubset(mock_imu.port_map.keys())
     mock_grf = MockVerticalGRF()
     mock_actuator = MockActuator()
-    torque_model = MockTorqueModel(outputs={"knee": 0.5, "ankle": -0.5})
+    torque_model = MockTorqueModel(outputs={KNEE_TORQUE: 0.5, ANKLE_TORQUE: -0.5})
 
     config = PIControllerConfig(
         dt=1 / 100,
         torque_scale=0.1,
         torque_limit_nm=10.0,
-        joints=("knee", "ankle"),
+        joints=(KNEE_TORQUE, ANKLE_TORQUE),
     )
     gains = PIControllerGains(
-        kp={"knee": 0.0, "ankle": 0.0},
-        ki={"knee": 0.0, "ankle": 0.0},
+        kp={KNEE_TORQUE: 0.0, ANKLE_TORQUE: 0.0},
+        ki={KNEE_TORQUE: 0.0, ANKLE_TORQUE: 0.0},
     )
     # Provide a schema so the runtime uses the DataWrangler path
     schema = InputSchema(
@@ -61,15 +64,15 @@ def test_controller_with_mock_devices() -> None:
         input_schema=schema,
     )
     routes = (
-        SignalRoute(name="knee_flexion_angle_ipsi_rad", provider="imu", default=0.0),
-        SignalRoute(name="knee_flexion_velocity_ipsi_rad_s", provider="imu", default=0.0),
-        SignalRoute(name="ankle_dorsiflexion_angle_ipsi_rad", provider="imu", default=0.0),
-        SignalRoute(name="ankle_dorsiflexion_velocity_ipsi_rad_s", provider="imu", default=0.0),
-        SignalRoute(name="vertical_grf_ipsi_N", provider="vertical_grf", default=0.0),
+        SignalRoute(name="knee_flexion_angle_ipsi_rad", provider="imu_mock", default=0.0),
+        SignalRoute(name="knee_flexion_velocity_ipsi_rad_s", provider="imu_mock", default=0.0),
+        SignalRoute(name="ankle_dorsiflexion_angle_ipsi_rad", provider="imu_mock", default=0.0),
+        SignalRoute(name="ankle_dorsiflexion_velocity_ipsi_rad_s", provider="imu_mock", default=0.0),
+        SignalRoute(name="vertical_grf_ipsi_N", provider="vertical_grf_mock", default=0.0),
     )
     loop = RuntimeLoop(
         RuntimeLoopConfig(frequency_hz=100.0),
-        sensors={"imu": mock_imu, "vertical_grf": mock_grf},
+        sensors={"imu_mock": mock_imu, "vertical_grf_mock": mock_grf},
         actuator=mock_actuator,
         controller=controller,
         signal_routes=routes,
@@ -82,8 +85,8 @@ def test_controller_with_mock_devices() -> None:
     assert mock_actuator.commanded, "Expected commands to be recorded"
     last_command = mock_actuator.last_command()
     assert last_command is not None
-    assert last_command.torques_nm["knee"] == pytest.approx(0.05, rel=1e-6)
-    assert last_command.torques_nm["ankle"] == pytest.approx(-0.05, rel=1e-6)
+    assert last_command.torques_nm[KNEE_TORQUE] == pytest.approx(0.05, rel=1e-6)
+    assert last_command.torques_nm[ANKLE_TORQUE] == pytest.approx(-0.05, rel=1e-6)
 
 
 def test_mock_imu_stale_fallback() -> None:

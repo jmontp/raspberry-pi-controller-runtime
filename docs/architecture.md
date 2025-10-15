@@ -456,7 +456,7 @@ hardware:
 controllers:
   pi_right_leg:
     implementation: rpc_runtime.controllers.pi_controller.PIController
-    joints: ["hip", "knee"]
+    joints: ["hip_flexion_moment_ipsi_Nm", "knee_flexion_moment_ipsi_Nm"]
     config:
       dt: 0.002
       torque_scale: 1.0
@@ -464,8 +464,8 @@ controllers:
       velocity_filter_alpha: 0.1
       torque_filter_alpha: 0.05
       gains:
-        kp: { hip: 14.0, knee: 18.0 }
-        ki: { hip: 1.0, knee: 1.2 }
+        kp: { hip_flexion_moment_ipsi_Nm: 14.0, knee_flexion_moment_ipsi_Nm: 18.0 }
+        ki: { hip_flexion_moment_ipsi_Nm: 1.0, knee_flexion_moment_ipsi_Nm: 1.2 }
     torque_model:
       implementation: rpc_runtime.controllers.torque_models.torchscript.TorchScriptTorqueModel
       config:
@@ -473,8 +473,8 @@ controllers:
 
 safety:
   limits:
-    hip:  { max_torque_nm: 70.0, clamp_strategy: saturate }
-    knee: { max_torque_nm: 80.0, clamp_strategy: saturate }
+    hip_flexion_moment_ipsi_Nm:  { max_torque_nm: 70.0, clamp_strategy: saturate }
+    knee_flexion_moment_ipsi_Nm: { max_torque_nm: 80.0, clamp_strategy: saturate }
   watchdog:
     max_tick_hz_delta: 0.0005
 

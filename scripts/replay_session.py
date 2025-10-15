@@ -71,11 +71,11 @@ def main() -> None:
         dt=1 / 500,
         torque_scale=0.1,
         torque_limit_nm=25,
-        joints=("knee", "ankle"),
+        joints=(KNEE_TORQUE, ANKLE_TORQUE),
     )
     gains = PIControllerGains(
-        kp={"knee": 120, "ankle": 80},
-        ki={"knee": 5, "ankle": 3},
+        kp={KNEE_TORQUE: 120, ANKLE_TORQUE: 80},
+        ki={KNEE_TORQUE: 5, ANKLE_TORQUE: 3},
     )
     model = ONNXTorqueModel(args.bundle)
     controller = PIController(config, gains, model)
@@ -129,3 +129,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+KNEE_TORQUE = "knee_flexion_moment_ipsi_Nm"
+ANKLE_TORQUE = "ankle_dorsiflexion_moment_ipsi_Nm"

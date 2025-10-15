@@ -11,6 +11,9 @@ from rpc_runtime.sensors.grf.mock import MockVerticalGRF
 from rpc_runtime.sensors.imu.base import BaseIMUConfig
 from rpc_runtime.sensors.imu.mock import MockIMU
 
+KNEE_TORQUE = "knee_flexion_moment_ipsi_Nm"
+ANKLE_TORQUE = "ankle_dorsiflexion_moment_ipsi_Nm"
+
 
 def main(duration_s: float = 1.0, frequency_hz: float = 20.0) -> None:
     """Stream mock data and print diagnostics for demonstration purposes."""
@@ -19,7 +22,10 @@ def main(duration_s: float = 1.0, frequency_hz: float = 20.0) -> None:
         config_override=BaseVerticalGRFConfig(max_stale_samples=3, fault_strategy="warn")
     )
     actuator = MockActuator(
-        config_override=BaseActuatorConfig(joint_names=("knee", "ankle"), clamp_torque=True)
+        config_override=BaseActuatorConfig(
+            joint_names=(KNEE_TORQUE, ANKLE_TORQUE),
+            clamp_torque=True,
+        )
     )
 
     dt = 1.0 / frequency_hz
@@ -27,7 +33,10 @@ def main(duration_s: float = 1.0, frequency_hz: float = 20.0) -> None:
     while time.monotonic() - start < duration_s:
         imu.read()
         grf.read()
-        command = TorqueCommand(timestamp=time.monotonic(), torques_nm={"knee": 1.0, "ankle": -1.0})
+        command = TorqueCommand(
+            timestamp=time.monotonic(),
+            torques_nm={KNEE_TORQUE: 1.0, ANKLE_TORQUE: -1.0},
+        )
         actuator.apply(command)
         print("IMU diagnostics:", imu.diagnostics)
         print("GRF diagnostics:", grf.diagnostics)
