@@ -129,10 +129,6 @@ class PIController:
             torques[joint] = self._torque_filters[joint].update(torque)
         return TorqueCommand(timestamp=timestamp, torques_nm=torques)
 
-    # Backwards compatibility wrapper retained temporarily; raise to fail fast
-    def tick(self, inputs: ControlInputs) -> TorqueCommand:  # pragma: no cover - transitional
-        raise NotImplementedError(
-            "PIController.tick is deprecated. Use compute_torque(features, timestamp)."
-        )
+    # tick() removed in favor of compute_torque(features, timestamp)
 
     # _build_features removed in favor of schema-driven DataWrangler

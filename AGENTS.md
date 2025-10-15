@@ -94,9 +94,11 @@ starting a new chat or automation session.
   - Use `SimpleScheduler` for CI/local tests.
   - Wrap NeuroLocoMiddleware’s `SoftRealtimeLoop` via `SoftRealtimeScheduler`
     for deployment.
-- Calibration should run through `CalibrationRoutine` before entering the loop.
-- Controllers should consume `ControlInputs` (IMU + optional GRF). Extend this
-  dataclass if we add more sensor modalities.
+- The runtime always uses `DataWrangler` to build canonical features each tick.
+  Controllers implement `compute_torque(features, *, timestamp)` and remain
+  agnostic to hardware specifics.
+- If sensors support alignment, call `imu.as_resettable()?.zero()` or `imu.reset()`
+  prior to starting the loop.
 
 ## 7. Commit & branching strategy
 - Create a feature branch per task; keep commits focused.
