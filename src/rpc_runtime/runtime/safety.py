@@ -1,10 +1,4 @@
-"""Safety management utilities for clamping and fault policy.
-
-This is a minimal implementation that clamps torques using simple per-joint
-limits. Actuators already enforce limits at apply-time; the safety layer exists
-to make the clamping explicit in the runtime loop and to surface counters for
-diagnostics.
-"""
+"""Safety management utilities for clamping and fault policy."""
 
 from __future__ import annotations
 
@@ -73,3 +67,4 @@ class SafetyManager:
         if clamped:
             self._metrics.clamp_events += 1
         return TorqueCommand(timestamp=command.timestamp, torques_nm=sanitized)
+

@@ -10,7 +10,7 @@ from rpc_runtime.controllers.pi_controller import (
     PIControllerGains,
 )
 from rpc_runtime.controllers.torque_models.mock import MockTorqueModel
-from rpc_runtime.pipelines.runtime_loop import RuntimeLoop, RuntimeLoopConfig
+from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.sensors.grf.mock import MockVerticalGRF
 from rpc_runtime.sensors.imu.base import BaseIMUConfig, IMUSample, IMUStaleDataError
 from rpc_runtime.sensors.imu.mock import MockIMU

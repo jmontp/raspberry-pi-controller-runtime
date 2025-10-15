@@ -1,16 +1,4 @@
-"""Data wrangling utilities that normalize sensor inputs into features.
-
-This implementation follows the architecture contract at a minimal level:
-
-- It ties together the configured hardware (IMU + optional GRF).
-- It uses the profile-provided `InputSchema` to build a dense, ordered feature
-  mapping each tick.
-- It exposes a read-only feature view and basic metadata.
-
-The implementation can be extended to pre-plan buffer indices and support
-derived signals that write directly into slots, but this version focuses on the
-semantics needed by the current runtime and tests.
-"""
+"""Data wrangling utilities that normalize sensor inputs into features."""
 
 from __future__ import annotations
 
@@ -99,9 +87,6 @@ class DataWrangler:
         # cannot be satisfied.
         self._schema.validate_signals(available)
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
     def __enter__(self) -> "DataWrangler":  # pragma: no cover - simple delegation
         """Start hardware streams when entering a context."""
         self.start()
@@ -130,9 +115,6 @@ class DataWrangler:
             self._vertical_grf.stop()
         self._imu.stop()
 
-    # ------------------------------------------------------------------
-    # Runtime
-    # ------------------------------------------------------------------
     def get_sensor_data(self) -> tuple[FeatureView, FeatureMetadata, ControlInputs]:
         """Fetch the latest canonical features and metadata.
 
@@ -147,11 +129,11 @@ class DataWrangler:
         try:
             dense_features: MutableMapping[str, float] = self._schema.build_features(control_inputs)
         except HardwareAvailabilityError:
-            # Re-raise for the runtime to handle according to policy; in the
-            # future, the wrangler can optionally zero-fill on a per-signal basis.
+            # Re-raise for the runtime to handle according to policy.
             raise
 
         # Freeze the view to discourage mutation.
         view = FeatureView(types.MappingProxyType(dict(dense_features)))
         meta = FeatureMetadata(timestamp=imu_sample.timestamp, stale=False)
         return view, meta, control_inputs
+

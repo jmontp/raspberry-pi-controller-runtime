@@ -11,10 +11,10 @@ from ..controllers.pi_controller import PIController
 from ..sensors.combinators import ControlInputs
 from ..sensors.grf.base import BaseVerticalGRF
 from ..sensors.imu.base import BaseIMU
-from .data_wrangler import DataWrangler
 from .diagnostics import DiagnosticsSink, NoOpDiagnosticsSink
 from .safety import SafetyConfig, SafetyManager
 from .scheduler import BaseScheduler, SimpleScheduler
+from .wrangler import DataWrangler
 
 
 @dataclass(slots=True)

@@ -6,8 +6,8 @@ the CSV sink is a simple, dependency-free way to persist feature/torque logs.
 ## CSV sink usage
 
 ```python
-from rpc_runtime.pipelines.diagnostics import CSVDiagnosticsSink
-from rpc_runtime.pipelines.runtime_loop import RuntimeLoop, RuntimeLoopConfig
+from rpc_runtime.runtime.diagnostics import CSVDiagnosticsSink
+from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
 
 # Choose an output file; the parent directory is created if missing.
 sink = CSVDiagnosticsSink("diagnostics/run.csv", include_segments=False)
@@ -35,4 +35,3 @@ The CSV columns are constructed on the first tick and include:
 - `scheduler_{key}` for scheduler metrics
 
 For in-memory logging during tests, use `InMemoryDiagnosticsSink` instead.
-

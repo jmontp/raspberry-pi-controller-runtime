@@ -14,7 +14,7 @@ from rpc_runtime.config.models import (
     SchemaSignal,
 )
 from rpc_runtime.config.runtime import build_runtime_components
-from rpc_runtime.pipelines.runtime_loop import RuntimeLoop, RuntimeLoopConfig
+from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.sensors.combinators import ControlInputs
 from rpc_runtime.sensors.imu.base import IMUSample
 

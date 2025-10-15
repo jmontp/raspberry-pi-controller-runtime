@@ -25,7 +25,7 @@ from pathlib import Path
 
 from rpc_runtime.config import load_runtime_profile
 from rpc_runtime.config.runtime import build_runtime_components
-from rpc_runtime.pipelines.runtime_loop import RuntimeLoop, RuntimeLoopConfig
+from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
 
 profile = load_runtime_profile(Path("src/rpc_runtime/config/default.yaml"))
 components = build_runtime_components(profile)
@@ -41,7 +41,7 @@ loop = RuntimeLoop(
 
 The controller manifest guarantees that sensors emit a consistent feature schema across training and evaluation. Required channels trigger validation errors when the profile omits compatible hardware, while optional channels fall back to zeroed defaults.
 
-Read `docs/config_profiles.md` for a detailed breakdown of every section in the profile and the runtime responsibilities.
+Read `docs/architecture.md` for module structure and `src/rpc_runtime/config/default.yaml` for a profile example.
 
 ## Repository layout
 See `docs/architecture.md` for a module-level overview and `AGENTS.md` for contributor expectations.

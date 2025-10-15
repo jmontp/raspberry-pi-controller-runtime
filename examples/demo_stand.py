@@ -11,7 +11,7 @@ from rpc_runtime.controllers.pi_controller import (
     PIControllerGains,
 )
 from rpc_runtime.controllers.torque_models.onnx_runtime import ONNXTorqueModel
-from rpc_runtime.pipelines.runtime_loop import RuntimeLoop, RuntimeLoopConfig
+from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.sensors.grf.fsr import BluetoothFSR, BluetoothFSRConfig
 from rpc_runtime.sensors.imu.microstrain_3dm_gx5 import (
     Microstrain3DMGX5Config,

@@ -1,9 +1,9 @@
 """Diagnostics sinks for the controller runtime.
 
-This module provides a minimal diagnostics interface used by the runtime loop.
-It intentionally avoids heavy dependencies so unit tests can run in a constrained
-environment. Implementations can later be extended to persist Parquet/Feather
-logs or integrate with pandas without changing the `RuntimeLoop` contract.
+Provides an abstract interface and two implementations:
+- NoOpDiagnosticsSink: drops diagnostics.
+- InMemoryDiagnosticsSink: stores rows in memory for tests.
+- CSVDiagnosticsSink: appends rows to a CSV with a dynamic header.
 """
 
 from __future__ import annotations
@@ -18,10 +18,7 @@ from ..sensors.combinators import ControlInputs
 
 
 class DiagnosticsSink:
-    """Abstract sink API consumed by the runtime loop.
-
-    Concrete sinks should override :meth:`log_tick` and :meth:`flush`.
-    """
+    """Abstract sink API consumed by the runtime loop."""
 
     def log_tick(
         self,
@@ -32,20 +29,7 @@ class DiagnosticsSink:
         torque_command_safe: TorqueCommand,
         scheduler: Mapping[str, float] | None = None,
     ) -> None:
-        """Write a single row for the current control tick.
-
-        Args:
-            timestamp: Monotonic timestamp of the IMU sample.
-            feature_packet: Raw inputs used by the controller (for context).
-            torque_command_raw: Controller output before safety clamping.
-            torque_command_safe: Command after safety enforcement.
-            scheduler: Optional scheduler metrics to include in the row.
-        """
-        """Record a single control tick worth of diagnostics.
-
-        The default implementation is a no-op to keep the loop robust when no
-        diagnostics are desired.
-        """
+        """Record a single control tick worth of diagnostics."""
 
     def flush(self) -> None:  # pragma: no cover - trivial default
         """Persist any buffered diagnostics to disk (optional)."""
@@ -60,12 +44,7 @@ class NoOpDiagnosticsSink(DiagnosticsSink):
 
 @dataclass(slots=True)
 class InMemoryDiagnosticsSink(DiagnosticsSink):
-    """Lightweight sink that stores diagnostics rows in memory.
-
-    This implementation aims to be dependency-free and suitable for tests. It
-    keeps a bounded list of rows with select fields extracted from inputs and
-    commands. Consumers can access :attr:`rows` for inspection.
-    """
+    """Lightweight sink that stores diagnostics rows in memory."""
 
     capacity: int = 10_000
     rows: list[dict] = field(default_factory=list, init=False)
@@ -79,29 +58,17 @@ class InMemoryDiagnosticsSink(DiagnosticsSink):
         torque_command_safe: TorqueCommand,
         scheduler: Mapping[str, float] | None = None,
     ) -> None:
-        """Append a diagnostics row for a single control tick.
-
-        Args:
-            timestamp: Monotonic timestamp of the IMU sample.
-            feature_packet: Raw inputs used by the controller (for context).
-            torque_command_raw: Controller output before safety clamping.
-            torque_command_safe: Command after safety enforcement.
-            scheduler: Optional scheduler metrics to include in the row.
-        """
+        """Append a diagnostics row for a single control tick."""
         if len(self.rows) >= self.capacity:
-            # Drop oldest to keep memory bounded
             self.rows.pop(0)
 
         imu = feature_packet.imu
         grf = feature_packet.vertical_grf
         row = {
             "timestamp": float(timestamp),
-            # Minimal IMU snapshot
             "imu_joint_angles": tuple(float(x) for x in imu.joint_angles_rad),
             "imu_joint_vel": tuple(float(x) for x in imu.joint_velocities_rad_s),
-            # Optional GRF
             "grf_forces": tuple(float(x) for x in (grf.forces_newton if grf else ())),
-            # Torques
             "torque_raw": {k: float(v) for k, v in torque_command_raw.torques_nm.items()},
             "torque_safe": {k: float(v) for k, v in torque_command_safe.torques_nm.items()},
         }
@@ -117,13 +84,8 @@ class InMemoryDiagnosticsSink(DiagnosticsSink):
 class CSVDiagnosticsSink(DiagnosticsSink):
     """Append control tick diagnostics to a CSV file.
 
-    The header is derived from the first tick and includes:
-    - ``timestamp``
-    - ``imu_joint_angle_{i}`` and ``imu_joint_vel_{i}``
-    - optional ``seg_angle_{i}``, ``seg_vel_{i}`` when enabled
-    - optional ``grf_force_{i}`` when GRF is present
-    - ``torque_raw_{joint}`` and ``torque_safe_{joint}``
-    - ``scheduler_{key}`` for provided scheduler metrics
+    The header is derived from the first tick and includes joint/segment/GRF
+    channels (when present), raw/safe torques, and scheduler metrics.
     """
 
     def __init__(
@@ -132,12 +94,7 @@ class CSVDiagnosticsSink(DiagnosticsSink):
         *,
         include_segments: bool = False,
     ) -> None:
-        """Create a CSV diagnostics sink.
-
-        Args:
-            path: Destination CSV filepath for the run log.
-            include_segments: Include segment angles/velocities in the log.
-        """
+        """Create a CSV diagnostics sink."""
         self._path = Path(path)
         self._include_segments = include_segments
         self._writer: csv.DictWriter | None = None
@@ -234,7 +191,6 @@ class CSVDiagnosticsSink(DiagnosticsSink):
             for i, v in enumerate(grf.forces_newton):
                 row[f"grf_force_{i}"] = float(v)
 
-        # Torques: fill missing keys with 0.0 for a dense CSV.
         for k in self._torque_keys or ():
             row[f"torque_raw_{k}"] = float(torque_command_raw.torques_nm.get(k, 0.0))
         for k in self._torque_keys or ():
@@ -260,3 +216,4 @@ class CSVDiagnosticsSink(DiagnosticsSink):
                 self._file.close()
         except Exception:
             pass
+

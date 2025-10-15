@@ -81,3 +81,4 @@ class SoftRealtimeScheduler(BaseScheduler):
         if hasattr(loop, "stop"):
             loop.stop()
         self._loop = None
+
