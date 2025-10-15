@@ -129,49 +129,10 @@ class PIController:
             torques[joint] = self._torque_filters[joint].update(torque)
         return TorqueCommand(timestamp=timestamp, torques_nm=torques)
 
-    # Backwards compatibility wrapper during migration
+    # Backwards compatibility wrapper retained temporarily; raise to fail fast
     def tick(self, inputs: ControlInputs) -> TorqueCommand:  # pragma: no cover - transitional
-        features = self._build_features(inputs)
-        return self.compute_torque(features, timestamp=inputs.imu.timestamp)
+        raise NotImplementedError(
+            "PIController.tick is deprecated. Use compute_torque(features, timestamp)."
+        )
 
-    def _build_features(self, inputs: ControlInputs) -> Dict[str, float]:
-        """Compose the feature dictionary expected by the torque model.
-
-        Args:
-            inputs: IMU sample and optional GRF measurements.
-
-        Returns:
-            Dict[str, float]: Feature values keyed by feature name.
-
-        Raises:
-            HardwareAvailabilityError: When required schema signals cannot be resolved.
-        """
-        if self._input_schema is not None:
-            features = dict(self._input_schema.build_features(inputs))
-        else:
-            imu = inputs.imu
-            features = {}
-            for idx, joint in enumerate(self._config.joints):
-                try:
-                    angle = imu.joint_angles_rad[idx]
-                    velocity = imu.joint_velocities_rad_s[idx]
-                except IndexError:
-                    angle = 0.0
-                    velocity = 0.0
-                features[f"{joint}_angle"] = angle
-                features[f"{joint}_velocity"] = velocity
-                features.setdefault(f"{joint}_desired_angle", angle)
-                features.setdefault(f"{joint}_desired_velocity", velocity)
-            if inputs.vertical_grf is not None:
-                for i, value in enumerate(inputs.vertical_grf.forces_newton):
-                    features[f"grf_{i}"] = value
-            return features
-
-        for joint in self._config.joints:
-            angle_key = f"{joint}_angle"
-            velocity_key = f"{joint}_velocity"
-            angle = features.get(angle_key, 0.0)
-            velocity = features.get(velocity_key, 0.0)
-            features.setdefault(f"{joint}_desired_angle", angle)
-            features.setdefault(f"{joint}_desired_velocity", velocity)
-        return features
+    # _build_features removed in favor of schema-driven DataWrangler

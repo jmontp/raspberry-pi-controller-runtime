@@ -13,6 +13,7 @@ from rpc_runtime.pipelines.runtime_loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.sensors.grf.mock import MockVerticalGRF
 from rpc_runtime.sensors.imu.base import BaseIMUConfig, IMUSample, IMUStaleDataError
 from rpc_runtime.sensors.imu.mock import MockIMU
+from rpc_runtime.config.models import InputSchema, SchemaSignal
 
 
 def test_controller_with_mock_devices() -> None:
@@ -41,7 +42,23 @@ def test_controller_with_mock_devices() -> None:
         kp={"knee": 0.0, "ankle": 0.0},
         ki={"knee": 0.0, "ankle": 0.0},
     )
-    controller = PIController(config=config, gains=gains, torque_model=torque_model)
+    # Provide a schema so the runtime uses the DataWrangler path
+    schema = InputSchema(
+        name="pi_inputs",
+        signals=(
+            SchemaSignal.from_registry("knee_angle"),
+            SchemaSignal.from_registry("knee_velocity"),
+            SchemaSignal.from_registry("ankle_angle"),
+            SchemaSignal.from_registry("ankle_velocity"),
+            SchemaSignal.from_registry("grf_total", required=False, default=0.0),
+        ),
+    )
+    controller = PIController(
+        config=config,
+        gains=gains,
+        torque_model=torque_model,
+        input_schema=schema,
+    )
     loop = RuntimeLoop(
         RuntimeLoopConfig(frequency_hz=100.0),
         imu=mock_imu,

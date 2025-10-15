@@ -15,7 +15,6 @@ from rpc_runtime.controllers.pi_controller import (
     PIControllerGains,
 )
 from rpc_runtime.controllers.torque_models.onnx_runtime import ONNXTorqueModel
-from rpc_runtime.sensors.combinators import ControlInputs
 from rpc_runtime.sensors.grf.base import VerticalGRFSample
 from rpc_runtime.sensors.imu.base import IMUSample
 
@@ -61,8 +60,14 @@ def main() -> None:
             timestamp=float(row.timestamp),
             forces_newton=(float(row.grf),),
         )
-        inputs = ControlInputs(imu=imu_sample, vertical_grf=grf_sample)
-        command = controller.tick(inputs)
+        features = {
+            "knee_angle": float(row.knee_angle),
+            "knee_velocity": float(row.knee_velocity),
+            "ankle_angle": float(row.ankle_angle),
+            "ankle_velocity": float(row.ankle_velocity),
+            "grf_total": float(row.grf),
+        }
+        command = controller.compute_torque(features, timestamp=imu_sample.timestamp)
         outputs.append({"timestamp": imu_sample.timestamp, **command.torques_nm})
 
     print(json.dumps(outputs[:5], indent=2))
