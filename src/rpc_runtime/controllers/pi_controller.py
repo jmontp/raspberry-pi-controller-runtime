@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Mapping
 
 from rpc_runtime.config.models import InputSchema
 
@@ -97,20 +97,26 @@ class PIController:
             self._integral_error[joint] = 0.0
             self._torque_filters[joint].reset()
 
-    def tick(self, inputs: ControlInputs) -> TorqueCommand:
-        """Advance the controller by one tick.
+    def compute_torque(self, features: Mapping[str, float], *, timestamp: float) -> TorqueCommand:
+        """Compute joint torques from canonical features.
 
         Args:
-            inputs: Current IMU and optional GRF measurements.
+            features: Mapping of canonical feature name to value.
+            timestamp: Monotonic time for the resulting torque command.
 
         Returns:
-            TorqueCommand: Torque command annotated with the IMU timestamp.
+            TorqueCommand: Safe torque command for the configured joints.
         """
-        features = self._build_features(inputs)
-        torque_ff = self._torque_model.run(features)
+        # Accept either a plain mapping or our FeatureView wrapper.
+        feature_map: Mapping[str, float]
+        if hasattr(features, "as_dict"):
+            feature_map = getattr(features, "as_dict")()
+        else:
+            feature_map = dict(features)
+        torque_ff = self._torque_model.run(dict(feature_map))
         torques: Dict[str, float] = {}
         for joint in self._config.joints:
-            ref = features.get(f"{joint}_desired_angle", 0.0)
+            ref = features.get(f"{joint}_desired_angle", features.get(f"{joint}_angle", 0.0))
             meas = features.get(f"{joint}_angle", 0.0)
             error = ref - meas
             integral = self._integral_error[joint] + error * self._config.dt
@@ -121,7 +127,12 @@ class PIController:
             torque = (p + i + feedforward) * self._config.torque_scale
             torque = max(min(torque, self._config.torque_limit_nm), -self._config.torque_limit_nm)
             torques[joint] = self._torque_filters[joint].update(torque)
-        return TorqueCommand(timestamp=inputs.imu.timestamp, torques_nm=torques)
+        return TorqueCommand(timestamp=timestamp, torques_nm=torques)
+
+    # Backwards compatibility wrapper during migration
+    def tick(self, inputs: ControlInputs) -> TorqueCommand:  # pragma: no cover - transitional
+        features = self._build_features(inputs)
+        return self.compute_torque(features, timestamp=inputs.imu.timestamp)
 
     def _build_features(self, inputs: ControlInputs) -> Dict[str, float]:
         """Compose the feature dictionary expected by the torque model.

@@ -14,6 +14,7 @@ from ..sensors.imu.base import BaseIMU
 from .diagnostics import DiagnosticsSink, NoOpDiagnosticsSink
 from .data_wrangler import DataWrangler
 from .scheduler import BaseScheduler, SimpleScheduler
+from .safety import SafetyManager, SafetyConfig
 
 
 @dataclass(slots=True)
@@ -64,6 +65,9 @@ class RuntimeLoop:
                 # If wrangler construction fails for any reason, fall back to
                 # legacy direct sensor polling.
                 self._wrangler = None
+        # Safety manager uses actuator limits when available.
+        limits = getattr(getattr(self._actuator, "config", None), "torque_limits_nm", None)
+        self._safety = SafetyManager(SafetyConfig(torque_limits_nm=limits or None))
 
     def __enter__(self) -> "RuntimeLoop":
         """Enter the loop context by initialising sensors and actuators."""
@@ -96,8 +100,9 @@ class RuntimeLoop:
             try:
                 for tick_index, _ in enumerate(scheduler.ticks()):
                     if self._wrangler is not None:
-                        _, meta, control_inputs = self._wrangler.get_sensor_data()
+                        features_view, meta, control_inputs = self._wrangler.get_sensor_data()
                         imu_sample = control_inputs.imu
+                        raw_command = self._controller.compute_torque(features_view, timestamp=meta.timestamp)
                     else:
                         imu_sample = self._imu.read()
                         grf_sample = (
@@ -106,8 +111,8 @@ class RuntimeLoop:
                             else None
                         )
                         control_inputs = ControlInputs(imu=imu_sample, vertical_grf=grf_sample)
-                    raw_command = self._controller.tick(control_inputs)
-                    safe_command = raw_command
+                        raw_command = self._controller.tick(control_inputs)
+                    safe_command = self._safety.enforce(raw_command)
                     scheduler_snapshot: Mapping[str, float] = {
                         "loop_time_s": time.monotonic() - start,
                         "tick_index": float(tick_index),
