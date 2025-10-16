@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence, TYPE_CHECKING
 
+import numpy as np
 from .diagnostics import CSVDiagnosticsSink, DiagnosticsSink
 from ..sensors.base import BaseSensor
 
@@ -613,7 +614,7 @@ class DiagnosticsArtifacts:
             time_series = pd.Series(range(len(df)), dtype=float)
             time_label = "Sample"
         time_series = time_series.fillna(method="ffill").fillna(method="bfill")
-        time_values = time_series.to_numpy()
+        time_values = time_series.to_numpy(dtype=float, copy=True)
 
         input_color = "#1f77b4"
         output_color = "#d62728"
@@ -691,12 +692,14 @@ class DiagnosticsArtifacts:
 
         unit_ranges: dict[str, tuple[float, float]] = {}
         for _, _, unit, _, series in entries:
-            valid = series.dropna()
-            if valid.empty:
+            numeric = series.to_numpy(dtype=float, copy=True)
+            finite_mask = np.isfinite(numeric)
+            if not finite_mask.any():
                 continue
+            finite_values = numeric[finite_mask]
             try:
-                vmin = float(valid.min())
-                vmax = float(valid.max())
+                vmin = float(np.nanmin(finite_values))
+                vmax = float(np.nanmax(finite_values))
             except (TypeError, ValueError):
                 continue
             if not math.isfinite(vmin) or not math.isfinite(vmax):
@@ -716,7 +719,7 @@ class DiagnosticsArtifacts:
                 vmax += pad
             unit_limits[unit] = (vmin, vmax)
 
-        fig_height = max(2.0, 1.5 * len(entries))
+        fig_height = max(4.0, 1.05 * len(entries) + 3.0)
         fig, axes = plt.subplots(len(entries), 1, sharex=True, figsize=(14, fig_height))
         title = "Runtime Signals"
         if self.profile_name:
@@ -725,19 +728,38 @@ class DiagnosticsArtifacts:
         if len(entries) == 1:
             axes = [axes]  # type: ignore[list-item]
         for ax, (_, name, unit, color, series) in zip(axes, entries):
-            ax.plot(time_values, series, color=color, linewidth=1.2)
-            ax.set_ylabel(f"{name} [{unit}]", rotation=0, ha="right", va="center")
-            ax.yaxis.set_label_coords(-0.2, 0.5)
+            values = series.to_numpy(dtype=float, copy=True)
+            finite_mask = np.isfinite(values)
+            aligned_time = time_values
+            if len(values) != len(time_values):
+                limit = min(len(values), len(time_values))
+                values = values[:limit]
+                finite_mask = finite_mask[:limit]
+                aligned_time = time_values[:limit]
+            plotted_values = np.where(finite_mask, values, np.nan)
+            ax.plot(aligned_time, plotted_values, color=color, linewidth=1.2)
+            if not np.all(finite_mask):
+                nan_times = aligned_time[~finite_mask]
+                unique_nan_times = np.unique(nan_times)
+                for x in unique_nan_times:
+                    ax.axvline(x, color="#c53030", linewidth=0.9, alpha=0.85, linestyle="--")
+            ax.set_title(name, loc="left", fontsize=10, pad=8)
+            axis_label = unit if unit else ""
+            ax.set_ylabel(axis_label, fontsize=9)
             limits = unit_limits.get(unit)
             if limits:
                 ax.set_ylim(*limits)
+            ax.margins(x=0.0)
             ax.grid(True, linestyle="--", alpha=0.25)
-            ax.tick_params(axis="y", labelsize=8)
+            ax.tick_params(axis="y", labelsize=8, pad=3)
             ax.spines["top"].set_visible(False)
             ax.spines["right"].set_visible(False)
+            ax.spines["left"].set_linewidth(0.8)
+            ax.spines["left"].set_color("#2d3748")
         axes[-1].set_xlabel(time_label)
-        axes[-1].tick_params(axis="x", labelsize=9)
-        fig.subplots_adjust(left=0.24, right=0.98, top=0.97, bottom=0.08, hspace=0.55)
+        axes[-1].tick_params(axis="x", labelsize=9, pad=2)
+        fig.align_ylabels(axes)
+        fig.subplots_adjust(left=0.06, right=0.975, top=0.982, bottom=0.07, hspace=0.42)
         output_path = data_path.with_suffix(".png")
         try:
             fig.savefig(output_path, dpi=150, format="png")
