@@ -663,6 +663,8 @@ class DiagnosticsArtifacts:
             for column, name, unit in mapping:
                 if column in df.columns:
                     series = pd.to_numeric(df[column], errors="coerce")
+                    if series.dropna().empty:
+                        continue
                     entries.append((column, name, unit, color, series))
 
         _add_signals(angle_map, input_color)
@@ -709,12 +711,16 @@ class DiagnosticsArtifacts:
 
         fig_height = max(2.0, 1.5 * len(entries))
         fig, axes = plt.subplots(len(entries), 1, sharex=True, figsize=(14, fig_height))
+        title = "Runtime Signals"
+        if self.profile_name:
+            title = f"{self.profile_name} Signals"
+        fig.suptitle(title, fontsize=14, y=0.995)
         if len(entries) == 1:
             axes = [axes]  # type: ignore[list-item]
         for ax, (_, name, unit, color, series) in zip(axes, entries):
             ax.plot(time_values, series, color=color, linewidth=1.2)
             ax.set_ylabel(f"{name} [{unit}]", rotation=0, ha="right", va="center")
-            ax.yaxis.set_label_coords(-0.04, 0.5)
+            ax.yaxis.set_label_coords(-0.2, 0.5)
             limits = unit_limits.get(unit)
             if limits:
                 ax.set_ylim(*limits)
@@ -724,7 +730,7 @@ class DiagnosticsArtifacts:
             ax.spines["right"].set_visible(False)
         axes[-1].set_xlabel(time_label)
         axes[-1].tick_params(axis="x", labelsize=9)
-        fig.subplots_adjust(left=0.2, right=0.98, top=0.97, bottom=0.06, hspace=0.5)
+        fig.subplots_adjust(left=0.24, right=0.98, top=0.97, bottom=0.08, hspace=0.55)
         output_path = data_path.with_suffix(".png")
         try:
             fig.savefig(output_path, dpi=150, format="png")

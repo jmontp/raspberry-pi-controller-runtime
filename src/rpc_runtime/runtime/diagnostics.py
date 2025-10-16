@@ -222,20 +222,30 @@ class CSVDiagnosticsSink(DiagnosticsSink):
 
 
 def _select_imu_sample(feature_packet: ControlInputs) -> IMUSample | None:
-    sample = feature_packet.imu
-    if isinstance(sample, IMUSample):
-        return sample
+    primary = feature_packet.imu
+    if isinstance(primary, IMUSample):
+        return primary
     for candidate in feature_packet.as_dict().values():
         if isinstance(candidate, IMUSample):
             return candidate
+        if hasattr(candidate, "joint_angles_rad"):
+            try:
+                angles = getattr(candidate, "joint_angles_rad")
+                velocities = getattr(candidate, "joint_velocities_rad_s", None)
+            except Exception:
+                continue
+            if angles is not None:
+                return candidate  # type: ignore[return-value]
     return None
 
 
 def _select_grf_sample(feature_packet: ControlInputs) -> VerticalGRFSample | None:
-    sample = feature_packet.vertical_grf
-    if isinstance(sample, VerticalGRFSample):
-        return sample
+    primary = feature_packet.vertical_grf
+    if isinstance(primary, VerticalGRFSample):
+        return primary
     for candidate in feature_packet.as_dict().values():
         if isinstance(candidate, VerticalGRFSample):
             return candidate
+        if hasattr(candidate, "forces_newton"):
+            return candidate  # type: ignore[return-value]
     return None
