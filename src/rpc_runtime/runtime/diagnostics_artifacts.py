@@ -708,18 +708,23 @@ class DiagnosticsArtifacts:
             unit_limits[unit] = (vmin, vmax)
 
         fig_height = max(2.0, 1.5 * len(entries))
-        fig, axes = plt.subplots(len(entries), 1, sharex=True, figsize=(12, fig_height))
+        fig, axes = plt.subplots(len(entries), 1, sharex=True, figsize=(14, fig_height))
         if len(entries) == 1:
             axes = [axes]  # type: ignore[list-item]
         for ax, (_, name, unit, color, series) in zip(axes, entries):
             ax.plot(time_values, series, color=color, linewidth=1.2)
-            ax.set_ylabel(f"{name} [{unit}]")
+            ax.set_ylabel(f"{name} [{unit}]", rotation=0, ha="right", va="center")
+            ax.yaxis.set_label_coords(-0.04, 0.5)
             limits = unit_limits.get(unit)
             if limits:
                 ax.set_ylim(*limits)
-            ax.grid(True, linestyle="--", alpha=0.3)
+            ax.grid(True, linestyle="--", alpha=0.25)
+            ax.tick_params(axis="y", labelsize=8)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
         axes[-1].set_xlabel(time_label)
-        fig.tight_layout()
+        axes[-1].tick_params(axis="x", labelsize=9)
+        fig.subplots_adjust(left=0.2, right=0.98, top=0.97, bottom=0.06, hspace=0.5)
         output_path = data_path.with_suffix(".png")
         try:
             fig.savefig(output_path, dpi=150, format="png")

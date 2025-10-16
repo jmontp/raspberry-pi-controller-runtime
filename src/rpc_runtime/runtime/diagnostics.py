@@ -15,6 +15,8 @@ from typing import Mapping
 
 from ..actuators.base import TorqueCommand
 from ..sensors.combinators import ControlInputs
+from ..sensors.imu.base import IMUSample
+from ..sensors.grf.base import VerticalGRFSample
 
 
 class DiagnosticsSink:
@@ -62,8 +64,8 @@ class InMemoryDiagnosticsSink(DiagnosticsSink):
         if len(self.rows) >= self.capacity:
             self.rows.pop(0)
 
-        imu = feature_packet.imu
-        grf = feature_packet.vertical_grf
+        imu = _select_imu_sample(feature_packet)
+        grf = _select_grf_sample(feature_packet)
         row = {
             "timestamp": float(timestamp),
             "imu_joint_angles": tuple(float(x) for x in getattr(imu, "joint_angles_rad", ())) if imu else (),
@@ -115,8 +117,8 @@ class CSVDiagnosticsSink(DiagnosticsSink):
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
-        imu = feature_packet.imu
-        grf = feature_packet.vertical_grf
+        imu = _select_imu_sample(feature_packet)
+        grf = _select_grf_sample(feature_packet)
         n_joints = len(getattr(imu, "joint_angles_rad", ())) if imu is not None else 0
         n_segments = len(getattr(imu, "segment_angles_rad", ())) if imu is not None else 0
         n_grf = len(getattr(grf, "forces_newton", ())) if grf is not None else 0
@@ -217,3 +219,23 @@ class CSVDiagnosticsSink(DiagnosticsSink):
                 self._file.close()
         except Exception:
             pass
+
+
+def _select_imu_sample(feature_packet: ControlInputs) -> IMUSample | None:
+    sample = feature_packet.imu
+    if isinstance(sample, IMUSample):
+        return sample
+    for candidate in feature_packet.as_dict().values():
+        if isinstance(candidate, IMUSample):
+            return candidate
+    return None
+
+
+def _select_grf_sample(feature_packet: ControlInputs) -> VerticalGRFSample | None:
+    sample = feature_packet.vertical_grf
+    if isinstance(sample, VerticalGRFSample):
+        return sample
+    for candidate in feature_packet.as_dict().values():
+        if isinstance(candidate, VerticalGRFSample):
+            return candidate
+    return None
