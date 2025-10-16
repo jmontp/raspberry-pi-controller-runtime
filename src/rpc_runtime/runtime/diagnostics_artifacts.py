@@ -619,42 +619,42 @@ class DiagnosticsArtifacts:
         output_color = "#d62728"
 
         angle_map = [
-            ("imu_joint_angle_0", "hip_flexion_angle_ipsi_rad", "rad"),
-            ("imu_joint_angle_1", "knee_flexion_angle_ipsi_rad", "rad"),
-            ("imu_joint_angle_2", "ankle_dorsiflexion_angle_ipsi_rad", "rad"),
-            ("imu_joint_angle_3", "hip_flexion_angle_contra_rad", "rad"),
-            ("imu_joint_angle_4", "knee_flexion_angle_contra_rad", "rad"),
-            ("imu_joint_angle_5", "ankle_dorsiflexion_angle_contra_rad", "rad"),
+            ("hip_flexion_angle_ipsi_rad", "hip_flexion_angle_ipsi_rad", "rad"),
+            ("knee_flexion_angle_ipsi_rad", "knee_flexion_angle_ipsi_rad", "rad"),
+            ("ankle_dorsiflexion_angle_ipsi_rad", "ankle_dorsiflexion_angle_ipsi_rad", "rad"),
+            ("hip_flexion_angle_contra_rad", "hip_flexion_angle_contra_rad", "rad"),
+            ("knee_flexion_angle_contra_rad", "knee_flexion_angle_contra_rad", "rad"),
+            ("ankle_dorsiflexion_angle_contra_rad", "ankle_dorsiflexion_angle_contra_rad", "rad"),
         ]
         velocity_map = [
-            ("imu_joint_vel_0", "hip_flexion_velocity_ipsi_rad_s", "rad/s"),
-            ("imu_joint_vel_1", "knee_flexion_velocity_ipsi_rad_s", "rad/s"),
-            ("imu_joint_vel_2", "ankle_dorsiflexion_velocity_ipsi_rad_s", "rad/s"),
-            ("imu_joint_vel_3", "hip_flexion_velocity_contra_rad_s", "rad/s"),
-            ("imu_joint_vel_4", "knee_flexion_velocity_contra_rad_s", "rad/s"),
-            ("imu_joint_vel_5", "ankle_dorsiflexion_velocity_contra_rad_s", "rad/s"),
+            ("hip_flexion_velocity_ipsi_rad_s", "hip_flexion_velocity_ipsi_rad_s", "rad/s"),
+            ("knee_flexion_velocity_ipsi_rad_s", "knee_flexion_velocity_ipsi_rad_s", "rad/s"),
+            ("ankle_dorsiflexion_velocity_ipsi_rad_s", "ankle_dorsiflexion_velocity_ipsi_rad_s", "rad/s"),
+            ("hip_flexion_velocity_contra_rad_s", "hip_flexion_velocity_contra_rad_s", "rad/s"),
+            ("knee_flexion_velocity_contra_rad_s", "knee_flexion_velocity_contra_rad_s", "rad/s"),
+            ("ankle_dorsiflexion_velocity_contra_rad_s", "ankle_dorsiflexion_velocity_contra_rad_s", "rad/s"),
         ]
         segment_angle_map = [
-            ("seg_angle_0", "trunk_sagittal_angle_rad", "rad"),
-            ("seg_angle_1", "thigh_sagittal_angle_ipsi_rad", "rad"),
-            ("seg_angle_2", "shank_sagittal_angle_ipsi_rad", "rad"),
-            ("seg_angle_3", "foot_sagittal_angle_ipsi_rad", "rad"),
-            ("seg_angle_4", "thigh_sagittal_angle_contra_rad", "rad"),
-            ("seg_angle_5", "shank_sagittal_angle_contra_rad", "rad"),
-            ("seg_angle_6", "foot_sagittal_angle_contra_rad", "rad"),
+            ("trunk_sagittal_angle_rad", "trunk_sagittal_angle_rad", "rad"),
+            ("thigh_sagittal_angle_ipsi_rad", "thigh_sagittal_angle_ipsi_rad", "rad"),
+            ("shank_sagittal_angle_ipsi_rad", "shank_sagittal_angle_ipsi_rad", "rad"),
+            ("foot_sagittal_angle_ipsi_rad", "foot_sagittal_angle_ipsi_rad", "rad"),
+            ("thigh_sagittal_angle_contra_rad", "thigh_sagittal_angle_contra_rad", "rad"),
+            ("shank_sagittal_angle_contra_rad", "shank_sagittal_angle_contra_rad", "rad"),
+            ("foot_sagittal_angle_contra_rad", "foot_sagittal_angle_contra_rad", "rad"),
         ]
         segment_velocity_map = [
-            ("seg_vel_0", "trunk_sagittal_velocity_rad_s", "rad/s"),
-            ("seg_vel_1", "thigh_sagittal_velocity_ipsi_rad_s", "rad/s"),
-            ("seg_vel_2", "shank_sagittal_velocity_ipsi_rad_s", "rad/s"),
-            ("seg_vel_3", "foot_sagittal_velocity_ipsi_rad_s", "rad/s"),
-            ("seg_vel_4", "thigh_sagittal_velocity_contra_rad_s", "rad/s"),
-            ("seg_vel_5", "shank_sagittal_velocity_contra_rad_s", "rad/s"),
-            ("seg_vel_6", "foot_sagittal_velocity_contra_rad_s", "rad/s"),
+            ("trunk_sagittal_velocity_rad_s", "trunk_sagittal_velocity_rad_s", "rad/s"),
+            ("thigh_sagittal_velocity_ipsi_rad_s", "thigh_sagittal_velocity_ipsi_rad_s", "rad/s"),
+            ("shank_sagittal_velocity_ipsi_rad_s", "shank_sagittal_velocity_ipsi_rad_s", "rad/s"),
+            ("foot_sagittal_velocity_ipsi_rad_s", "foot_sagittal_velocity_ipsi_rad_s", "rad/s"),
+            ("thigh_sagittal_velocity_contra_rad_s", "thigh_sagittal_velocity_contra_rad_s", "rad/s"),
+            ("shank_sagittal_velocity_contra_rad_s", "shank_sagittal_velocity_contra_rad_s", "rad/s"),
+            ("foot_sagittal_velocity_contra_rad_s", "foot_sagittal_velocity_contra_rad_s", "rad/s"),
         ]
         grf_map = [
-            ("grf_force_0", "vertical_grf_ipsi_N", "N"),
-            ("grf_force_1", "vertical_grf_contra_N", "N"),
+            ("vertical_grf_ipsi_N", "vertical_grf_ipsi_N", "N"),
+            ("vertical_grf_contra_N", "vertical_grf_contra_N", "N"),
         ]
 
         entries: list[tuple[str, str, str, str, pd.Series]] = []
@@ -678,6 +678,13 @@ class DiagnosticsArtifacts:
             unit = "Nm/kg" if name.endswith("_Nm_kg") else "Nm"
             series = pd.to_numeric(df[column], errors="coerce")
             entries.append((column, name, unit, output_color, series))
+
+        feature_columns = set(col for col, _, _, _, _ in entries if not col.startswith("torque_safe_"))
+        for column in sorted(c for c in df.columns if c not in feature_columns and not c.startswith("torque_") and not c.startswith("scheduler_") and c not in {"timestamp"}):
+            series = pd.to_numeric(df[column], errors="coerce")
+            if series.dropna().empty:
+                continue
+            entries.append((column, column, "", input_color, series))
 
         if not entries:
             return

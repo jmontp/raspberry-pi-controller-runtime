@@ -26,6 +26,7 @@ class DiagnosticsSink:
         self,
         *,
         timestamp: float,
+        features: Mapping[str, float],
         feature_packet: ControlInputs,
         torque_command_raw: TorqueCommand,
         torque_command_safe: TorqueCommand,
@@ -55,6 +56,7 @@ class InMemoryDiagnosticsSink(DiagnosticsSink):
         self,
         *,
         timestamp: float,
+        features: Mapping[str, float],
         feature_packet: ControlInputs,
         torque_command_raw: TorqueCommand,
         torque_command_safe: TorqueCommand,
@@ -73,6 +75,7 @@ class InMemoryDiagnosticsSink(DiagnosticsSink):
             "grf_forces": tuple(float(x) for x in getattr(grf, "forces_newton", ())) if grf else (),
             "torque_raw": {k: float(v) for k, v in torque_command_raw.torques_nm.items()},
             "torque_safe": {k: float(v) for k, v in torque_command_safe.torques_nm.items()},
+            "features": dict(features),
         }
         if scheduler:
             row.update({f"scheduler_{k}": float(v) for k, v in scheduler.items()})
@@ -102,13 +105,14 @@ class CSVDiagnosticsSink(DiagnosticsSink):
         self._writer: csv.DictWriter | None = None
         self._file = None
         self._columns: list[str] | None = None
+        self._feature_keys: tuple[str, ...] | None = None
         self._torque_keys: tuple[str, ...] | None = None
         self._scheduler_keys: tuple[str, ...] | None = None
 
     def _ensure_writer(
         self,
         *,
-        feature_packet: ControlInputs,
+        features: Mapping[str, float],
         torque_command_raw: TorqueCommand,
         torque_command_safe: TorqueCommand,
         scheduler: Mapping[str, float] | None,
@@ -117,25 +121,11 @@ class CSVDiagnosticsSink(DiagnosticsSink):
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
-        imu = _select_imu_sample(feature_packet)
-        grf = _select_grf_sample(feature_packet)
-        n_joints = len(getattr(imu, "joint_angles_rad", ())) if imu is not None else 0
-        n_segments = len(getattr(imu, "segment_angles_rad", ())) if imu is not None else 0
-        n_grf = len(getattr(grf, "forces_newton", ())) if grf is not None else 0
-
-        torque_keys = sorted(
-            set(torque_command_raw.torques_nm) | set(torque_command_safe.torques_nm)
-        )
+        feature_keys = sorted(features.keys())
+        torque_keys = sorted(set(torque_command_raw.torques_nm) | set(torque_command_safe.torques_nm))
         scheduler_keys = sorted((scheduler or {}).keys())
 
-        columns: list[str] = ["timestamp"]
-        columns += [f"imu_joint_angle_{i}" for i in range(n_joints)]
-        columns += [f"imu_joint_vel_{i}" for i in range(n_joints)]
-        if self._include_segments:
-            columns += [f"seg_angle_{i}" for i in range(n_segments)]
-            columns += [f"seg_vel_{i}" for i in range(n_segments)]
-        if n_grf:
-            columns += [f"grf_force_{i}" for i in range(n_grf)]
+        columns: list[str] = ["timestamp"] + feature_keys
         for k in torque_keys:
             columns.append(f"torque_raw_{k}")
         for k in torque_keys:
@@ -144,6 +134,7 @@ class CSVDiagnosticsSink(DiagnosticsSink):
             columns.append(f"scheduler_{k}")
 
         self._columns = columns
+        self._feature_keys = tuple(feature_keys)
         self._torque_keys = tuple(torque_keys)
         self._scheduler_keys = tuple(scheduler_keys)
         self._file = self._path.open("w", newline="", encoding="utf-8")
@@ -154,51 +145,30 @@ class CSVDiagnosticsSink(DiagnosticsSink):
         self,
         *,
         timestamp: float,
+        features: Mapping[str, float],
         feature_packet: ControlInputs,
         torque_command_raw: TorqueCommand,
         torque_command_safe: TorqueCommand,
         scheduler: Mapping[str, float] | None = None,
     ) -> None:
-        """Write a single row for the current control tick.
-
-        Args:
-            timestamp: Monotonic timestamp of the IMU sample.
-            feature_packet: Raw inputs used by the controller (for context).
-            torque_command_raw: Controller output before safety clamping.
-            torque_command_safe: Command after safety enforcement.
-            scheduler: Optional scheduler metrics to include in the row.
-        """
+        """Write a single row for the current control tick."""
         self._ensure_writer(
-            feature_packet=feature_packet,
+            features=features,
             torque_command_raw=torque_command_raw,
             torque_command_safe=torque_command_safe,
             scheduler=scheduler,
         )
         assert self._writer is not None and self._columns is not None
 
-        imu = feature_packet.imu
-        grf = feature_packet.vertical_grf
         row: dict[str, float] = {"timestamp": float(timestamp)}
-
-        if imu is not None:
-            for i, v in enumerate(getattr(imu, "joint_angles_rad", ())):
-                row[f"imu_joint_angle_{i}"] = float(v)
-            for i, v in enumerate(getattr(imu, "joint_velocities_rad_s", ())):
-                row[f"imu_joint_vel_{i}"] = float(v)
-            if self._include_segments:
-                for i, v in enumerate(getattr(imu, "segment_angles_rad", ())):
-                    row[f"seg_angle_{i}"] = float(v)
-                for i, v in enumerate(getattr(imu, "segment_velocities_rad_s", ())):
-                    row[f"seg_vel_{i}"] = float(v)
-        if grf is not None:
-            for i, v in enumerate(grf.forces_newton):
-                row[f"grf_force_{i}"] = float(v)
-
+        for key in self._feature_keys or ():
+            value = features.get(key)
+            if value is not None:
+                row[key] = float(value)
         for k in self._torque_keys or ():
             row[f"torque_raw_{k}"] = float(torque_command_raw.torques_nm.get(k, 0.0))
         for k in self._torque_keys or ():
             row[f"torque_safe_{k}"] = float(torque_command_safe.torques_nm.get(k, 0.0))
-
         for k in self._scheduler_keys or ():
             if scheduler and k in scheduler:
                 row[f"scheduler_{k}"] = float(scheduler[k])

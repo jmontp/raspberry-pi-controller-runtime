@@ -104,12 +104,10 @@ class RuntimeLoop:
                         "target_frequency_hz": self._config.frequency_hz,
                     }
 
-                    imu_sample = control_inputs.imu
-                    timestamp = getattr(imu_sample, "timestamp", None)
-                    if timestamp is None:
-                        timestamp = meta.timestamp
+                    timestamp = meta.timestamp
                     self._diagnostics.log_tick(
                         timestamp=float(timestamp),
+                        features=dict(features_view.as_dict()),
                         feature_packet=control_inputs,
                         torque_command_raw=raw_command,
                         torque_command_safe=safe_command,
