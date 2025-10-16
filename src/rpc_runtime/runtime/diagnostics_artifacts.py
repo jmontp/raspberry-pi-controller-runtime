@@ -105,6 +105,7 @@ class DiagnosticsArtifacts:
 
     enabled: bool
     run_dir: Path
+    additional_dir: Path
     sensors_dir: Path
     running_stats_dir: Path
     sink: DiagnosticsSink | None
@@ -127,6 +128,7 @@ class DiagnosticsArtifacts:
             return cls(
                 enabled=False,
                 run_dir=Path(),
+                additional_dir=Path(),
                 sensors_dir=Path(),
                 running_stats_dir=Path(),
                 sink=None,
@@ -134,24 +136,26 @@ class DiagnosticsArtifacts:
 
         timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
         run_dir = root / f"{_safe_profile_name(profile_name)}_{timestamp}"
-        sensors_dir = run_dir / "sensors"
-        running_stats_dir = run_dir / "running_stats"
+        additional_dir = run_dir / "additional_info"
+        sensors_dir = additional_dir / "sensors"
+        running_stats_dir = additional_dir / "running_stats"
 
         running_stats_dir.mkdir(parents=True, exist_ok=True)
         sensors_dir.mkdir(parents=True, exist_ok=True)
 
         sink: DiagnosticsSink | None = None
         if enable_csv:
-            sink = CSVDiagnosticsSink(run_dir / "loop.csv")
+            sink = CSVDiagnosticsSink(run_dir / "data.csv")
 
         try:
-            shutil.copy2(profile_path, run_dir / profile_path.name)
+            shutil.copy2(profile_path, additional_dir / profile_path.name)
         except Exception as exc:  # pragma: no cover - best effort
             LOGGER.warning("Failed to copy profile '%s' into diagnostics dir: %s", profile_path, exc)
 
         return cls(
             enabled=True,
             run_dir=run_dir,
+            additional_dir=additional_dir,
             sensors_dir=sensors_dir,
             running_stats_dir=running_stats_dir,
             sink=sink,
@@ -236,6 +240,11 @@ class DiagnosticsArtifacts:
             _write_series(target / "sample_rates_hz.csv", rates, header="hz")
             rate_edges, rate_counts = sensor.sample_rate_histogram(bins=10)
             _write_histogram_counts(target / "sample_rate_histogram.csv", rate_edges, rate_counts)
+            rate_plot_path = None
+            try:
+                rate_plot_path = self._render_rate_plot(alias, rates, periods, target)
+            except Exception as exc:  # pragma: no cover - best effort
+                LOGGER.warning("Failed to render rate plot for '%s': %s", alias, exc)
             summary_lines = [
                 f"total_samples={getattr(diagnostics, 'total_samples', 0)}",
                 f"stale_samples={getattr(diagnostics, 'stale_samples', 0)}",
@@ -266,6 +275,8 @@ class DiagnosticsArtifacts:
                     "rate_hist_csv": target / "sample_rate_histogram.csv",
                     "summary_path": target / "summary.txt",
                     "config": getattr(sensor, "config", None),
+                    "rate_plot": rate_plot_path,
+                    "drop_intervals": self._compute_drop_intervals(periods, getattr(sensor, "config", None)),
                 }
             )
         return summaries
@@ -285,15 +296,31 @@ class DiagnosticsArtifacts:
         lines.append("|--------|-------|")
         duration = loop_stats.get("duration_s")
         ticks = loop_stats.get("ticks")
-        lines.append(f"| Duration (s) | {duration:.2f} |" if isinstance(duration, (int, float)) else "| Duration (s) | N/A |")
+        lines.append(
+            f"| Duration (s) | {duration:.2f} |" if isinstance(duration, (int, float)) else "| Duration (s) | N/A |"
+        )
         lines.append(f"| Ticks | {ticks} |")
         lines.append(f"| Diagnostics Path | `{self.run_dir}` |")
+        lines.append("| Data CSV | [data.csv](data.csv) |")
+        lines.append("")
+
+        lines.append("## How to Read This Report")
+        lines.append("")
+        lines.append(
+            "- **Loop Performance** summarises overall scheduler cadence (smaller period ⇒ higher rate). "
+            "Min/Max rows refer to fastest/slowest control cycles."
+        )
+        lines.append(
+            "- **Sensors** tables show sample counts and observed bandwidth. "
+            "Histograms indicate how often each sensor reported within a given period bin."
+        )
+        lines.append("- ⚠️ Alerts call out potential problems (e.g., dropouts exceeding configured tolerances).")
         lines.append("")
 
         lines.append("## Loop Performance")
         lines.append("")
-        lines.append("| Stat | Period (ms) | Rate (Hz) |")
-        lines.append("|------|-------------|-----------|")
+        lines.append("| Condition | Period (ms) | Rate (Hz) |")
+        lines.append("|-----------|-------------|-----------|")
         min_period = loop_stats.get("min_period_s")
         mean_period = loop_stats.get("mean_period_s")
         max_period = loop_stats.get("max_period_s")
@@ -306,9 +333,9 @@ class DiagnosticsArtifacts:
                 return "N/A"
             return f"{value * scale:.{decimals}f}"
 
-        lines.append(f"| Min | {_fmt(min_period, 1000.0)} | {_fmt(max_rate)} |")
-        lines.append(f"| Mean | {_fmt(mean_period, 1000.0)} | {_fmt(mean_rate)} |")
-        lines.append(f"| Max | {_fmt(max_period, 1000.0)} | {_fmt(min_rate)} |")
+        lines.append(f"| Fastest (min period) | {_fmt(min_period, 1000.0)} | {_fmt(max_rate)} |")
+        lines.append(f"| Typical (mean period) | {_fmt(mean_period, 1000.0)} | {_fmt(mean_rate)} |")
+        lines.append(f"| Slowest (max period) | {_fmt(max_period, 1000.0)} | {_fmt(min_rate)} |")
         lines.append("")
 
         histogram_path = self.running_stats_dir / "loop_rate_histogram.png"
@@ -348,7 +375,7 @@ class DiagnosticsArtifacts:
                     start = period_edges[idx]
                     end = period_edges[idx + 1] if idx + 1 < len(period_edges) else period_edges[idx]
                     lines.append(f"| {start:.3f}–{end:.3f} | {count} |")
-                lines.append("")
+            lines.append("")
 
             lines.append(
                 "Links: "
@@ -357,6 +384,22 @@ class DiagnosticsArtifacts:
                 f"[period_hist]({summary['period_hist_csv'].relative_to(self.run_dir).as_posix()}), "
                 f"[rate_hist]({summary['rate_hist_csv'].relative_to(self.run_dir).as_posix()})"
             )
+            lines.append("")
+
+            if summary.get("rate_plot") is not None and summary["rate_plot"].exists():
+                rel_plot = summary["rate_plot"].relative_to(self.run_dir)
+                lines.append(f"![Sample Rate Timeline]({rel_plot.as_posix()})")
+                lines.append("")
+
+            drop_intervals = summary.get("drop_intervals") or []
+            if drop_intervals:
+                threshold = getattr(summary.get("config"), "max_stale_time_s", None)
+                if threshold is not None:
+                    lines.append(f"Dropout intervals (period > {threshold:.2f}s):")
+                else:
+                    lines.append("Dropout intervals:")
+                for start, end, duration in drop_intervals:
+                    lines.append(f"- {start:.2f}s → {end:.2f}s (duration {duration:.2f}s)")
             lines.append("")
 
             config = summary.get("config")
@@ -380,3 +423,68 @@ class DiagnosticsArtifacts:
         lines.append("")
 
         report_path.write_text("\n".join(lines), encoding="utf-8")
+
+    def _render_rate_plot(
+        self,
+        alias: str,
+        rates: Sequence[float],
+        periods: Sequence[float],
+        target_dir: Path,
+    ) -> Path | None:
+        if not rates or not periods:
+            return None
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except Exception:
+            return None
+
+        times: list[float] = []
+        cumulative = 0.0
+        for period in periods:
+            cumulative += period
+            times.append(cumulative)
+
+        path = target_dir / "sample_rate_timeseries.png"
+        fig, ax = plt.subplots(figsize=(6, 2.5))
+        ax.plot(times[: len(rates)], rates, color="#2a4365", linewidth=1.2)
+        ax.set_title(f"{alias} Sample Rate")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Rate (Hz)")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        fig.tight_layout()
+        try:
+            fig.savefig(path, dpi=150, format="png")
+        finally:
+            plt.close(fig)
+        return path
+
+    def _compute_drop_intervals(
+        self,
+        periods: Sequence[float],
+        config: object,
+    ) -> list[tuple[float, float, float]]:
+        if not periods:
+            return []
+        threshold = getattr(config, "max_stale_time_s", None)
+        if threshold is None:
+            return []
+        intervals: list[tuple[float, float, float]] = []
+        cumulative = 0.0
+        start = None
+        for period in periods:
+            cumulative += period
+            if period > threshold:
+                if start is None:
+                    start = cumulative - period
+            else:
+                if start is not None:
+                    end = cumulative
+                    intervals.append((start, end, end - start))
+                    start = None
+        if start is not None:
+            end = cumulative
+            intervals.append((start, end, end - start))
+        return intervals
