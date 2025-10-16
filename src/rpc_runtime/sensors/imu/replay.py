@@ -69,14 +69,21 @@ class ReplayIMU(BaseIMU):
     loop: bool = False
     dt: float = 0.01
     time_column: str | None = None
-    config_override: BaseIMUConfig | None = None
+    config_override: BaseIMUConfig | dict | None = None
     _frame: pd.DataFrame | None = field(init=False, default=None, repr=False)
     _timestamps: list[float] = field(init=False, default_factory=list, repr=False)
     _cursor: int = field(init=False, default=0, repr=False)
 
     def __post_init__(self) -> None:
         """Initialise base configuration; dataset is loaded on start()."""
-        BaseIMU.__init__(self, self.config_override)
+        override = self.config_override
+        if isinstance(override, BaseIMUConfig):
+            config = override
+        elif isinstance(override, dict):
+            config = BaseIMUConfig(**override)
+        else:
+            config = None
+        BaseIMU.__init__(self, config)
         self._tasks = _normalise_tasks(self.tasks)
         self._path = Path(self.path).expanduser()
 

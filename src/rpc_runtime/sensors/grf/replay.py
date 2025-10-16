@@ -37,7 +37,7 @@ class ReplayVerticalGRF(BaseVerticalGRF):
     dt: float = 0.01
     body_mass_kg: float | None = None
     time_column: str | None = None
-    config_override: BaseVerticalGRFConfig | None = None
+    config_override: BaseVerticalGRFConfig | dict | None = None
     _frame: pd.DataFrame | None = field(init=False, default=None, repr=False)
     _timestamps: list[float] = field(init=False, default_factory=list, repr=False)
     _cursor: int = field(init=False, default=0, repr=False)
@@ -49,7 +49,13 @@ class ReplayVerticalGRF(BaseVerticalGRF):
     }
 
     def __post_init__(self) -> None:
-        config = self.config_override or BaseVerticalGRFConfig(channel_names=self.CHANNEL_NAMES)
+        override = self.config_override
+        if isinstance(override, BaseVerticalGRFConfig):
+            config = override
+        elif isinstance(override, dict):
+            config = BaseVerticalGRFConfig(**override)
+        else:
+            config = BaseVerticalGRFConfig(channel_names=self.CHANNEL_NAMES)
         BaseVerticalGRF.__init__(self, config)
         self._tasks = _normalise_tasks(self.tasks)
         self._path = Path(self.path).expanduser()

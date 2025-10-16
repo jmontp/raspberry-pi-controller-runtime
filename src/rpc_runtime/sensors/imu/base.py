@@ -243,14 +243,39 @@ class BaseIMU(BaseSensor):
             "shank_sagittal_velocity_contra_rad_s": "shank_l",
             "foot_sagittal_velocity_contra_rad_s": "foot_l",
         }
+        legacy_joint_angle_indices = {
+            "knee_flexion_angle_ipsi_rad": 0,
+            "ankle_dorsiflexion_angle_ipsi_rad": 1,
+        }
+        legacy_joint_velocity_indices = {
+            "knee_flexion_velocity_ipsi_rad_s": 0,
+            "ankle_dorsiflexion_velocity_ipsi_rad_s": 1,
+        }
+        joint_angle_data = getattr(sample, "joint_angles_rad", ())
+        joint_velocity_data = getattr(sample, "joint_velocities_rad_s", ())
+        expected_joint_len = len(self.joint_names)
         if name in joint_angle_names:
-            return self._resolve_named_joint(sample, "joint_angles_rad", joint_angle_names[name])
+            value = None
+            if len(joint_angle_data) == expected_joint_len and expected_joint_len:
+                value = self._resolve_named_joint(sample, "joint_angles_rad", joint_angle_names[name])
+            if value is not None:
+                return value
+            idx = legacy_joint_angle_indices.get(name)
+            if idx is not None:
+                return self._resolve_joint_attribute(sample, "joint_angles_rad", idx)
         if name in joint_velocity_names:
-            return self._resolve_named_joint(
-                sample,
-                "joint_velocities_rad_s",
-                joint_velocity_names[name],
-            )
+            value = None
+            if len(joint_velocity_data) == expected_joint_len and expected_joint_len:
+                value = self._resolve_named_joint(
+                    sample,
+                    "joint_velocities_rad_s",
+                    joint_velocity_names[name],
+                )
+            if value is not None:
+                return value
+            idx = legacy_joint_velocity_indices.get(name)
+            if idx is not None:
+                return self._resolve_joint_attribute(sample, "joint_velocities_rad_s", idx)
         if name in segment_angle_names:
             return self._resolve_named_segment(sample, "segment_angles_rad", segment_angle_names[name])
         if name in segment_velocity_names:
