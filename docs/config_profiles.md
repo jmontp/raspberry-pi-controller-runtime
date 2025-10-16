@@ -38,3 +38,53 @@ All other controller configuration remains unchanged; gains, torque limits, and
 filter parameters still live under `controllers.<name>.config`. Replace the
 previous mock torque model with the bundle implementation when ready to deploy
 trained models on the Raspberry Pi.
+
+## Replay sensors for dataset validation
+
+To validate torque bundles without hardware, profiles can swap physical
+adapters for dataset-backed replays:
+
+```yaml
+hardware:
+  sensors:
+    imu_replay:
+      class: rpc_runtime.sensors.imu.replay.ReplayIMU
+      config:
+        path: ../LocoHub/converted_datasets/gtech_2021_phase_filtered.parquet
+        subject: Gtech_2021_AB06
+        tasks: [decline_walking]
+        start_index: 0
+        max_samples: 5000
+        dt: 0.01
+    grf_replay:
+      class: rpc_runtime.sensors.grf.replay.ReplayVerticalGRF
+      config:
+        path: ../LocoHub/converted_datasets/gtech_2021_phase_filtered.parquet
+        subject: Gtech_2021_AB06
+        tasks: [decline_walking]
+        body_mass_kg: 75.0
+        dt: 0.01
+        config_override:
+          channel_names:
+            - vertical_grf_ipsi_N
+            - vertical_grf_contra_N
+```
+
+Replay sensor options:
+
+- `path` (required): dataset file (Parquet/Feather/CSV) with canonical column
+  names as exported by `@LocoHub/converted_datasets`.
+- `subject`, `tasks` (optional): filter rows before replay; `tasks` accepts a
+  string or list of task labels.
+- `start_index`, `max_samples`: limit the replay window for quick smoke tests.
+- `dt`: sample interval used to synthesise timestamps when the dataset omits a
+  time column.
+- `loop`: recycle samples when the replay window finishes (default `False`).
+- `body_mass_kg` (GRF only): converts body-weight forces to newtons
+  (`force_N = value_BW * mass_kg * 9.80665`).
+
+Each `input_signals` entry should reference the replay sensor providing that
+signal. Because the dataset columns already use canonical signal names, no extra
+mapping is required. The sample profile `scripts/replay_bundle_config.yaml`
+illustrates a full replay setup that drives the bundle-backed controller using
+converted dataset recordings.

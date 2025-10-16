@@ -1,0 +1,118 @@
+profile:
+  name: replay_bundle_runtime
+  controller: pi_bundle
+
+input_signals:
+  - name: hip_flexion_angle_ipsi_rad
+    hardware: imu_replay
+  - name: hip_flexion_velocity_ipsi_rad_s
+    hardware: imu_replay
+  - name: thigh_sagittal_angle_ipsi_rad
+    hardware: imu_replay
+  - name: thigh_sagittal_velocity_ipsi_rad_s
+    hardware: imu_replay
+  - name: hip_flexion_angle_contra_rad
+    hardware: imu_replay
+  - name: hip_flexion_velocity_contra_rad_s
+    hardware: imu_replay
+  - name: thigh_sagittal_angle_contra_rad
+    hardware: imu_replay
+  - name: thigh_sagittal_velocity_contra_rad_s
+    hardware: imu_replay
+  - name: knee_flexion_angle_ipsi_rad
+    hardware: imu_replay
+  - name: knee_flexion_velocity_ipsi_rad_s
+    hardware: imu_replay
+  - name: shank_sagittal_angle_ipsi_rad
+    hardware: imu_replay
+  - name: shank_sagittal_velocity_ipsi_rad_s
+    hardware: imu_replay
+  - name: knee_flexion_angle_contra_rad
+    hardware: imu_replay
+  - name: knee_flexion_velocity_contra_rad_s
+    hardware: imu_replay
+  - name: shank_sagittal_angle_contra_rad
+    hardware: imu_replay
+  - name: shank_sagittal_velocity_contra_rad_s
+    hardware: imu_replay
+  - name: ankle_dorsiflexion_angle_ipsi_rad
+    hardware: imu_replay
+  - name: ankle_dorsiflexion_velocity_ipsi_rad_s
+    hardware: imu_replay
+  - name: foot_sagittal_angle_ipsi_rad
+    hardware: imu_replay
+  - name: foot_sagittal_velocity_ipsi_rad_s
+    hardware: imu_replay
+  - name: ankle_dorsiflexion_angle_contra_rad
+    hardware: imu_replay
+  - name: ankle_dorsiflexion_velocity_contra_rad_s
+    hardware: imu_replay
+  - name: foot_sagittal_angle_contra_rad
+    hardware: imu_replay
+  - name: foot_sagittal_velocity_contra_rad_s
+    hardware: imu_replay
+  - name: vertical_grf_ipsi_N
+    hardware: grf_replay
+
+output_signals:
+  - name: knee_flexion_moment_ipsi_Nm
+    hardware: actuator_mock
+  - name: ankle_dorsiflexion_moment_ipsi_Nm
+    hardware: actuator_mock
+
+hardware:
+  sensors:
+    imu_replay:
+      class: rpc_runtime.sensors.imu.replay.ReplayIMU
+      config:
+        path: ../LocoHub/converted_datasets/gtech_2021_phase_filtered.parquet
+        subject: Gtech_2021_AB06
+        tasks:
+          - decline_walking
+        max_samples: 5000
+        dt: 0.01
+    grf_replay:
+      class: rpc_runtime.sensors.grf.replay.ReplayVerticalGRF
+      config:
+        path: ../LocoHub/converted_datasets/gtech_2021_phase_filtered.parquet
+        subject: Gtech_2021_AB06
+        tasks:
+          - decline_walking
+        max_samples: 5000
+        dt: 0.01
+        body_mass_kg: 75.0
+        config_override:
+          channel_names:
+            - vertical_grf_ipsi_N
+            - vertical_grf_contra_N
+  actuators:
+    actuator_mock:
+      class: rpc_runtime.actuators.mock.MockActuator
+      config: {}
+
+controllers:
+  pi_bundle:
+    implementation: rpc_runtime.controllers.pi_controller.PIController
+    joints:
+      - knee_flexion_moment_ipsi_Nm
+      - ankle_dorsiflexion_moment_ipsi_Nm
+    config:
+      dt: 0.01
+      torque_scale: 1.0
+      torque_limit_nm: 30.0
+      gains:
+        kp:
+          knee_flexion_moment_ipsi_Nm: 8.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 6.5
+        ki:
+          knee_flexion_moment_ipsi_Nm: 0.2
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.15
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.bundle.BundleTorqueModel
+      config:
+        bundle_path: models/torque_bundles/8d98d14846
+        output_map:
+          knee_flexion_moment_ipsi_Nm: knee_flexion_moment_ipsi_Nm_kg
+          ankle_dorsiflexion_moment_ipsi_Nm: ankle_dorsiflexion_moment_ipsi_Nm_kg
+        subject_mass_kg: 72.0
+        assistance_fraction: 0.35

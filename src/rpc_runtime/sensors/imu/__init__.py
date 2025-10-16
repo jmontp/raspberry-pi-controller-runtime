@@ -4,6 +4,7 @@ from .base import BaseIMU, BaseIMUConfig, IMUSample
 from .microstrain_3dm_gx5 import Microstrain3DMGX5Config, Microstrain3DMGX5IMU
 from .mock import MockIMU
 from .mock_faulty import MockFaultyIMU
+from .replay import ReplayIMU
 from .simulated import SimulatedIMU
 
 __all__ = [
@@ -14,5 +15,6 @@ __all__ = [
     "Microstrain3DMGX5IMU",
     "MockIMU",
     "MockFaultyIMU",
+    "ReplayIMU",
     "SimulatedIMU",
 ]
