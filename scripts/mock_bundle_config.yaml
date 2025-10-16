@@ -1,0 +1,118 @@
+profile:
+  name: mock_bundle_runtime
+  controller: pi_bundle
+
+input_signals:
+  - name: hip_flexion_angle_ipsi_rad
+    required: false
+    default: 0.0
+  - name: hip_flexion_velocity_ipsi_rad_s
+    required: false
+    default: 0.0
+  - name: thigh_sagittal_angle_ipsi_rad
+    required: false
+    default: 0.0
+  - name: thigh_sagittal_velocity_ipsi_rad_s
+    required: false
+    default: 0.0
+  - name: hip_flexion_angle_contra_rad
+    required: false
+    default: 0.0
+  - name: hip_flexion_velocity_contra_rad_s
+    required: false
+    default: 0.0
+  - name: thigh_sagittal_angle_contra_rad
+    required: false
+    default: 0.0
+  - name: thigh_sagittal_velocity_contra_rad_s
+    required: false
+    default: 0.0
+  - name: knee_flexion_angle_ipsi_rad
+    hardware: imu_mock
+  - name: knee_flexion_velocity_ipsi_rad_s
+    hardware: imu_mock
+  - name: shank_sagittal_angle_ipsi_rad
+    required: false
+    default: 0.0
+  - name: shank_sagittal_velocity_ipsi_rad_s
+    required: false
+    default: 0.0
+  - name: knee_flexion_angle_contra_rad
+    required: false
+    default: 0.0
+  - name: knee_flexion_velocity_contra_rad_s
+    required: false
+    default: 0.0
+  - name: shank_sagittal_angle_contra_rad
+    required: false
+    default: 0.0
+  - name: shank_sagittal_velocity_contra_rad_s
+    required: false
+    default: 0.0
+  - name: ankle_dorsiflexion_angle_ipsi_rad
+    hardware: imu_mock
+  - name: ankle_dorsiflexion_velocity_ipsi_rad_s
+    hardware: imu_mock
+  - name: foot_sagittal_angle_ipsi_rad
+    required: false
+    default: 0.0
+  - name: foot_sagittal_velocity_ipsi_rad_s
+    required: false
+    default: 0.0
+  - name: ankle_dorsiflexion_angle_contra_rad
+    required: false
+    default: 0.0
+  - name: ankle_dorsiflexion_velocity_contra_rad_s
+    required: false
+    default: 0.0
+  - name: foot_sagittal_angle_contra_rad
+    required: false
+    default: 0.0
+  - name: foot_sagittal_velocity_contra_rad_s
+    required: false
+    default: 0.0
+
+output_signals:
+  - name: knee_flexion_moment_ipsi_Nm
+    hardware: actuator_mock
+  - name: ankle_dorsiflexion_moment_ipsi_Nm
+    hardware: actuator_mock
+
+hardware:
+  sensors:
+    imu_mock:
+      class: rpc_runtime.sensors.imu.mock.MockIMU
+      config:
+        loop: true
+  actuators:
+    actuator_mock:
+      class: rpc_runtime.actuators.mock.MockActuator
+      config: {}
+
+controllers:
+  pi_bundle:
+    implementation: rpc_runtime.controllers.pi_controller.PIController
+    joints:
+      - knee_flexion_moment_ipsi_Nm
+      - ankle_dorsiflexion_moment_ipsi_Nm
+    description: "PI controller using bundle-backed torque model for mock hardware."
+    config:
+      dt: 0.01
+      torque_scale: 1.0
+      torque_limit_nm: 30.0
+      gains:
+        kp:
+          knee_flexion_moment_ipsi_Nm: 8.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 6.5
+        ki:
+          knee_flexion_moment_ipsi_Nm: 0.2
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.15
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.bundle.BundleTorqueModel
+      config:
+        bundle_path: models/torque_bundles/8d98d14846
+        output_map:
+          knee_flexion_moment_ipsi_Nm: knee_flexion_moment_ipsi_Nm_kg
+          ankle_dorsiflexion_moment_ipsi_Nm: ankle_dorsiflexion_moment_ipsi_Nm_kg
+        subject_mass_kg: 72.0
+        assistance_fraction: 0.35

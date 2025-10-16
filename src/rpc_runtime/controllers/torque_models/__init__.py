@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 from .base import TorqueModel
+from .bundle import BundleTorqueModel
 from .mock import MockTorqueModel
 
-__all__ = ["TorqueModel", "MockTorqueModel", "ONNXTorqueModel", "TorchscriptTorqueModel"]
+__all__ = [
+    "TorqueModel",
+    "MockTorqueModel",
+    "BundleTorqueModel",
+    "ONNXTorqueModel",
+    "TorchscriptTorqueModel",
+]
 
 
 def __getattr__(name: str):

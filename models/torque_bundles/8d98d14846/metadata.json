@@ -1,0 +1,102 @@
+{
+  "format": "torchscript",
+  "arch": "energy_shaping",
+  "run_name": "energy_three_bi",
+  "run_id": "8d98d14846",
+  "input_features": [
+    "hip_flexion_angle_ipsi_rad",
+    "hip_flexion_velocity_ipsi_rad_s",
+    "thigh_sagittal_angle_ipsi_rad",
+    "thigh_sagittal_velocity_ipsi_rad_s",
+    "hip_flexion_angle_contra_rad",
+    "hip_flexion_velocity_contra_rad_s",
+    "thigh_sagittal_angle_contra_rad",
+    "thigh_sagittal_velocity_contra_rad_s",
+    "knee_flexion_angle_ipsi_rad",
+    "knee_flexion_velocity_ipsi_rad_s",
+    "shank_sagittal_angle_ipsi_rad",
+    "shank_sagittal_velocity_ipsi_rad_s",
+    "knee_flexion_angle_contra_rad",
+    "knee_flexion_velocity_contra_rad_s",
+    "shank_sagittal_angle_contra_rad",
+    "shank_sagittal_velocity_contra_rad_s",
+    "ankle_dorsiflexion_angle_ipsi_rad",
+    "ankle_dorsiflexion_velocity_ipsi_rad_s",
+    "foot_sagittal_angle_ipsi_rad",
+    "foot_sagittal_velocity_ipsi_rad_s",
+    "ankle_dorsiflexion_angle_contra_rad",
+    "ankle_dorsiflexion_velocity_contra_rad_s",
+    "foot_sagittal_angle_contra_rad",
+    "foot_sagittal_velocity_contra_rad_s"
+  ],
+  "artifacts": {
+    "origin": "torque_modeling/artifacts/energy_shaping/T-20250911-105200_8d98d14846"
+  },
+  "options": {},
+  "outputs": {
+    "torque": "energy_shaping.ts"
+  },
+  "runtime": "torchscript",
+  "input_index_map": {
+    "hip_flexion_angle_ipsi_rad": 0,
+    "hip_flexion_velocity_ipsi_rad_s": 1,
+    "thigh_sagittal_angle_ipsi_rad": 2,
+    "thigh_sagittal_velocity_ipsi_rad_s": 3,
+    "hip_flexion_angle_contra_rad": 4,
+    "hip_flexion_velocity_contra_rad_s": 5,
+    "thigh_sagittal_angle_contra_rad": 6,
+    "thigh_sagittal_velocity_contra_rad_s": 7,
+    "knee_flexion_angle_ipsi_rad": 8,
+    "knee_flexion_velocity_ipsi_rad_s": 9,
+    "shank_sagittal_angle_ipsi_rad": 10,
+    "shank_sagittal_velocity_ipsi_rad_s": 11,
+    "knee_flexion_angle_contra_rad": 12,
+    "knee_flexion_velocity_contra_rad_s": 13,
+    "shank_sagittal_angle_contra_rad": 14,
+    "shank_sagittal_velocity_contra_rad_s": 15,
+    "ankle_dorsiflexion_angle_ipsi_rad": 16,
+    "ankle_dorsiflexion_velocity_ipsi_rad_s": 17,
+    "foot_sagittal_angle_ipsi_rad": 18,
+    "foot_sagittal_velocity_ipsi_rad_s": 19,
+    "ankle_dorsiflexion_angle_contra_rad": 20,
+    "ankle_dorsiflexion_velocity_contra_rad_s": 21,
+    "foot_sagittal_angle_contra_rad": 22,
+    "foot_sagittal_velocity_contra_rad_s": 23
+  },
+  "bundle_version": "2025-01",
+  "torque_outputs": [
+    {
+      "name": "hip_flexion_moment_ipsi_Nm_kg",
+      "unit": "Nm_per_kg"
+    },
+    {
+      "name": "knee_flexion_moment_ipsi_Nm_kg",
+      "unit": "Nm_per_kg"
+    },
+    {
+      "name": "ankle_dorsiflexion_moment_ipsi_Nm_kg",
+      "unit": "Nm_per_kg"
+    },
+    {
+      "name": "hip_flexion_moment_contra_Nm_kg",
+      "unit": "Nm_per_kg"
+    },
+    {
+      "name": "knee_flexion_moment_contra_Nm_kg",
+      "unit": "Nm_per_kg"
+    },
+    {
+      "name": "ankle_dorsiflexion_moment_contra_Nm_kg",
+      "unit": "Nm_per_kg"
+    }
+  ],
+  "torque_normalised_by_mass": true,
+  "available_heads": {
+    "phase": false,
+    "step_height": false,
+    "subject": false,
+    "walk_speed": false,
+    "walk_incline": false,
+    "task_high": false
+  }
+}

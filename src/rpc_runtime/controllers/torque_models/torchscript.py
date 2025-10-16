@@ -41,6 +41,16 @@ class TorchscriptTorqueModel(TorqueModel):
             raise FileNotFoundError(f"No TorchScript module found in {bundle_path}")
         self._module = torch.jit.load(model_files[0])
         self._metadata = metadata
+        torque_entries = metadata.get("torque_outputs", [])
+        names: list[str] = []
+        for entry in torque_entries:
+            if isinstance(entry, dict):
+                name = entry.get("name")
+            else:
+                name = entry
+            if name is not None:
+                names.append(str(name))
+        self._torque_names = tuple(names)
 
     def expected_features(self) -> Iterable[str]:
         """Return the ordered feature list consumed by the TorchScript model."""
@@ -50,9 +60,14 @@ class TorchscriptTorqueModel(TorqueModel):
         """Execute a forward pass through the TorchScript module."""
         ordered = torch.tensor([features[name] for name in self._features], dtype=torch.float32)
         ordered = (ordered - self._mean) / self._scale
-        with torch.no_grad():
-            output = self._module(ordered.unsqueeze(0)).squeeze(0)
-        return {f"torque_{i}": float(value) for i, value in enumerate(output)}
+        output = self._module(ordered.unsqueeze(0)).squeeze(0)
+        values = output.detach().tolist()
+        names = (
+            self._torque_names
+            if self._torque_names and len(self._torque_names) == len(values)
+            else tuple(f"torque_{i}" for i in range(len(values)))
+        )
+        return {name: float(value) for name, value in zip(names, values, strict=False)}
 
     def warmup(self) -> None:
         """Run a dummy inference to pre-load TorchScript weights."""
