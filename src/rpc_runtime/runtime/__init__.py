@@ -6,6 +6,7 @@ from .diagnostics import (
     InMemoryDiagnosticsSink,
     NoOpDiagnosticsSink,
 )
+from .diagnostics_artifacts import DiagnosticsArtifacts
 from .loop import RuntimeLoop, RuntimeLoopConfig
 from .safety import SafetyConfig, SafetyManager
 from .scheduler import BaseScheduler, SimpleScheduler, SoftRealtimeScheduler
@@ -28,6 +29,7 @@ __all__ = [
     "NoOpDiagnosticsSink",
     "InMemoryDiagnosticsSink",
     "CSVDiagnosticsSink",
+    "DiagnosticsArtifacts",
     "SafetyManager",
     "SafetyConfig",
     "DataWrangler",
