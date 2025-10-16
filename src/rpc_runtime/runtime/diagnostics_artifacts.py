@@ -14,6 +14,7 @@ from typing import Iterable, Mapping, Sequence, TYPE_CHECKING
 
 import numpy as np
 from .diagnostics import CSVDiagnosticsSink, DiagnosticsSink
+from ..actuators.base import TorqueCommand
 from ..sensors.base import BaseSensor
 
 LOGGER = logging.getLogger(__name__)
@@ -55,6 +56,147 @@ GLOSSARY_ENTRIES: tuple[tuple[str, str], ...] = (
         "Timeline highlighting stale/missing events as red bars; blank regions correspond to fresh readings.",
     ),
 )
+
+INPUT_COLOR = "#1f77b4"
+OUTPUT_COLOR = "#d62728"
+
+ANGLE_SIGNALS = [
+    "hip_flexion_angle_ipsi_rad",
+    "knee_flexion_angle_ipsi_rad",
+    "ankle_dorsiflexion_angle_ipsi_rad",
+    "hip_flexion_angle_contra_rad",
+    "knee_flexion_angle_contra_rad",
+    "ankle_dorsiflexion_angle_contra_rad",
+]
+
+VELOCITY_SIGNALS = [
+    "hip_flexion_velocity_ipsi_rad_s",
+    "knee_flexion_velocity_ipsi_rad_s",
+    "ankle_dorsiflexion_velocity_ipsi_rad_s",
+    "hip_flexion_velocity_contra_rad_s",
+    "knee_flexion_velocity_contra_rad_s",
+    "ankle_dorsiflexion_velocity_contra_rad_s",
+]
+
+SEGMENT_ANGLE_SIGNALS = [
+    "trunk_sagittal_angle_rad",
+    "thigh_sagittal_angle_ipsi_rad",
+    "shank_sagittal_angle_ipsi_rad",
+    "foot_sagittal_angle_ipsi_rad",
+    "thigh_sagittal_angle_contra_rad",
+    "shank_sagittal_angle_contra_rad",
+    "foot_sagittal_angle_contra_rad",
+]
+
+SEGMENT_VELOCITY_SIGNALS = [
+    "trunk_sagittal_velocity_rad_s",
+    "thigh_sagittal_velocity_ipsi_rad_s",
+    "shank_sagittal_velocity_ipsi_rad_s",
+    "foot_sagittal_velocity_ipsi_rad_s",
+    "thigh_sagittal_velocity_contra_rad_s",
+    "shank_sagittal_velocity_contra_rad_s",
+    "foot_sagittal_velocity_contra_rad_s",
+]
+
+GRF_SIGNALS = [
+    "vertical_grf_ipsi_N",
+    "vertical_grf_contra_N",
+]
+
+SIGNAL_UNITS: dict[str, str] = {}
+SIGNAL_UNITS.update({name: "rad" for name in ANGLE_SIGNALS})
+SIGNAL_UNITS.update({name: "rad/s" for name in VELOCITY_SIGNALS})
+SIGNAL_UNITS.update({name: "rad" for name in SEGMENT_ANGLE_SIGNALS})
+SIGNAL_UNITS.update({name: "rad/s" for name in SEGMENT_VELOCITY_SIGNALS})
+SIGNAL_UNITS.update({name: "N" for name in GRF_SIGNALS})
+
+SIGNAL_ORDER: list[str] = (
+    ANGLE_SIGNALS
+    + VELOCITY_SIGNALS
+    + SEGMENT_ANGLE_SIGNALS
+    + SEGMENT_VELOCITY_SIGNALS
+    + GRF_SIGNALS
+)
+
+
+def _resolve_signal_unit(name: str) -> str:
+    if name in SIGNAL_UNITS:
+        return SIGNAL_UNITS[name]
+    if name.startswith("torque_safe_") or name.startswith("torque_raw_"):
+        if name.endswith("_Nm_kg"):
+            return "Nm/kg"
+        if name.endswith("_Nm"):
+            return "Nm"
+        return "Nm"
+    return ""
+
+
+def _resolve_signal_color(name: str) -> str:
+    if name.startswith("torque_safe_") or name.startswith("torque_raw_"):
+        return OUTPUT_COLOR
+    return INPUT_COLOR
+
+
+def _resolve_display_name(name: str) -> str:
+    if name.startswith("torque_safe_"):
+        return name.removeprefix("torque_safe_")
+    if name.startswith("torque_raw_"):
+        return name.removeprefix("torque_raw_")
+    return name
+
+
+class _RTPlotPublisher:
+    """Thin wrapper around better-rtplot for streaming runtime features."""
+
+    def __init__(self, host: str, ordered_entries: Sequence[tuple[str, str, str, str]]) -> None:
+        try:
+            from rtplot import client as rt_client  # type: ignore[import]
+        except Exception as exc:
+            raise RuntimeError(f"rtplot client unavailable: {exc}") from exc
+
+        host_clean = (host or "").strip()
+        host_key = host_clean.lower()
+        if not host_clean or host_key == "local":
+            rt_client.local_plot()
+        elif host_key == "tv":
+            rt_client.plot_to_neurobionics_tv()
+        else:
+            rt_client.configure_ip(host_clean)
+
+        grouped: dict[str, list[tuple[str, str, str]]] = {}
+        for column, label, unit, color in ordered_entries:
+            unit_key = unit if unit else "unitless"
+            grouped.setdefault(unit_key, []).append((column, label, color))
+
+        layout = []
+        ordered_columns: list[str] = []
+        for unit_key, items in grouped.items():
+            ylabel = "" if unit_key == "unitless" else unit_key
+            title = "Unitless" if unit_key == "unitless" else unit_key
+            layout.append(
+                {
+                    "names": [label for _, label, _ in items],
+                    "colors": [color for _, _, color in items],
+                    "line_width": 1,
+                    "ylabel": ylabel,
+                    "title": title,
+                }
+            )
+            ordered_columns.extend(column for column, _, _ in items)
+
+        if not ordered_columns:
+            raise RuntimeError("No streamable signals provided for rtplot")
+
+        rt_client.initialize_plots(layout)
+        self._client = rt_client
+        self._ordered_columns = ordered_columns
+
+    def send(self, features: Mapping[str, float]) -> None:
+        import numpy as _np
+
+        values = [_np.float32(features.get(name, 0.0)) for name in self._ordered_columns]
+        payload = _np.asarray(values, dtype=_np.float32).reshape(len(values), 1)
+        self._client.send_array(payload)
 
 def _safe_profile_name(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)
@@ -151,8 +293,10 @@ class DiagnosticsArtifacts:
     timestamp_str: str | None = None
     target_frequency_hz: float | None = None
     sensor_signal_map: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    rtplot_host: str | None = None
     _loop_periods: list[float] = field(default_factory=list, init=False)
     _last_tick_time: float | None = field(default=None, init=False)
+    _rtplot_publisher: _RTPlotPublisher | None = field(default=None, init=False)
 
     @classmethod
     def create(
@@ -164,6 +308,7 @@ class DiagnosticsArtifacts:
         enable_csv: bool = True,
         target_frequency_hz: float | None = None,
         signal_routes: Sequence["SignalRoute"] | None = None,
+        rtplot_host: str | None = None,
     ) -> "DiagnosticsArtifacts":
         """Initialise a diagnostics run directory and CSV sink."""
         signal_map: dict[str, tuple[str, ...]] = {}
@@ -177,6 +322,12 @@ class DiagnosticsArtifacts:
                 grouped.setdefault(provider, set()).add(name)
             signal_map = {alias: tuple(sorted(names)) for alias, names in grouped.items()}
 
+        if isinstance(rtplot_host, str):
+            stripped = rtplot_host.strip()
+            host_value = stripped if stripped else None
+        else:
+            host_value = None
+
         if root is None:
             return cls(
                 enabled=False,
@@ -187,6 +338,7 @@ class DiagnosticsArtifacts:
                 sink=None,
                 target_frequency_hz=target_frequency_hz,
                 sensor_signal_map=signal_map,
+                rtplot_host=host_value,
             )
 
         timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -218,6 +370,7 @@ class DiagnosticsArtifacts:
             timestamp_str=timestamp,
             target_frequency_hz=target_frequency_hz,
             sensor_signal_map=signal_map,
+            rtplot_host=host_value,
         )
 
     def diagnostics_enabled(self) -> bool:
@@ -232,6 +385,76 @@ class DiagnosticsArtifacts:
         if self._last_tick_time is not None:
             self._loop_periods.append(now - self._last_tick_time)
         self._last_tick_time = now
+
+    def publish_realtime(self, features: Mapping[str, float], torque: TorqueCommand | None = None) -> None:
+        """Stream live diagnostics metrics via rtplot when enabled."""
+        if self.rtplot_host is None:
+            return
+
+        payload: dict[str, float] = dict(features)
+        if torque is not None:
+            for joint, value in torque.torques_nm.items():
+                payload[f"torque_safe_{joint}"] = float(value)
+
+        if not payload:
+            return
+
+        if self._rtplot_publisher is None:
+            entries = self._build_rtplot_entries(payload)
+            if not entries:
+                LOGGER.warning("No eligible signals to stream via rtplot; disabling publisher")
+                self.rtplot_host = None
+                return
+            try:
+                self._rtplot_publisher = _RTPlotPublisher(self.rtplot_host, entries)
+            except Exception as exc:
+                LOGGER.warning("Failed to initialise rtplot streaming: %s", exc)
+                self.rtplot_host = None
+                return
+
+        try:
+            self._rtplot_publisher.send(payload)
+        except Exception as exc:
+            LOGGER.warning("rtplot streaming error (%s); disabling publisher", exc)
+            self._rtplot_publisher = None
+            self.rtplot_host = None
+
+    def _build_rtplot_entries(self, values: Mapping[str, float]) -> list[tuple[str, str, str, str]]:
+        seen: set[str] = set()
+        entries: list[tuple[str, str, str, str]] = []
+
+        for name in SIGNAL_ORDER:
+            if name in values:
+                unit = _resolve_signal_unit(name)
+                label = _resolve_display_name(name)
+                color = _resolve_signal_color(name)
+                entries.append((name, label, unit, color))
+                seen.add(name)
+
+        torque_keys = [key for key in values if key.startswith("torque_safe_") or key.startswith("torque_raw_")]
+        for name in sorted(torque_keys):
+            if name in seen:
+                continue
+            unit = _resolve_signal_unit(name)
+            label = _resolve_display_name(name)
+            color = _resolve_signal_color(name)
+            entries.append((name, label, unit, color))
+            seen.add(name)
+
+        for name in values:
+            if (
+                name in seen
+                or name == "timestamp"
+                or name.startswith("scheduler_")
+            ):
+                continue
+            unit = _resolve_signal_unit(name)
+            label = _resolve_display_name(name)
+            color = _resolve_signal_color(name)
+            entries.append((name, label, unit, color))
+            seen.add(name)
+
+        return entries
 
     def finalise(self, sensors: Mapping[str, BaseSensor]) -> None:
         """Persist aggregated scheduler and sensor diagnostics."""
@@ -616,76 +839,28 @@ class DiagnosticsArtifacts:
         time_series = time_series.fillna(method="ffill").fillna(method="bfill")
         time_values = time_series.to_numpy(dtype=float, copy=True)
 
-        input_color = "#1f77b4"
-        output_color = "#d62728"
-
-        angle_map = [
-            ("hip_flexion_angle_ipsi_rad", "hip_flexion_angle_ipsi_rad", "rad"),
-            ("knee_flexion_angle_ipsi_rad", "knee_flexion_angle_ipsi_rad", "rad"),
-            ("ankle_dorsiflexion_angle_ipsi_rad", "ankle_dorsiflexion_angle_ipsi_rad", "rad"),
-            ("hip_flexion_angle_contra_rad", "hip_flexion_angle_contra_rad", "rad"),
-            ("knee_flexion_angle_contra_rad", "knee_flexion_angle_contra_rad", "rad"),
-            ("ankle_dorsiflexion_angle_contra_rad", "ankle_dorsiflexion_angle_contra_rad", "rad"),
-        ]
-        velocity_map = [
-            ("hip_flexion_velocity_ipsi_rad_s", "hip_flexion_velocity_ipsi_rad_s", "rad/s"),
-            ("knee_flexion_velocity_ipsi_rad_s", "knee_flexion_velocity_ipsi_rad_s", "rad/s"),
-            ("ankle_dorsiflexion_velocity_ipsi_rad_s", "ankle_dorsiflexion_velocity_ipsi_rad_s", "rad/s"),
-            ("hip_flexion_velocity_contra_rad_s", "hip_flexion_velocity_contra_rad_s", "rad/s"),
-            ("knee_flexion_velocity_contra_rad_s", "knee_flexion_velocity_contra_rad_s", "rad/s"),
-            ("ankle_dorsiflexion_velocity_contra_rad_s", "ankle_dorsiflexion_velocity_contra_rad_s", "rad/s"),
-        ]
-        segment_angle_map = [
-            ("trunk_sagittal_angle_rad", "trunk_sagittal_angle_rad", "rad"),
-            ("thigh_sagittal_angle_ipsi_rad", "thigh_sagittal_angle_ipsi_rad", "rad"),
-            ("shank_sagittal_angle_ipsi_rad", "shank_sagittal_angle_ipsi_rad", "rad"),
-            ("foot_sagittal_angle_ipsi_rad", "foot_sagittal_angle_ipsi_rad", "rad"),
-            ("thigh_sagittal_angle_contra_rad", "thigh_sagittal_angle_contra_rad", "rad"),
-            ("shank_sagittal_angle_contra_rad", "shank_sagittal_angle_contra_rad", "rad"),
-            ("foot_sagittal_angle_contra_rad", "foot_sagittal_angle_contra_rad", "rad"),
-        ]
-        segment_velocity_map = [
-            ("trunk_sagittal_velocity_rad_s", "trunk_sagittal_velocity_rad_s", "rad/s"),
-            ("thigh_sagittal_velocity_ipsi_rad_s", "thigh_sagittal_velocity_ipsi_rad_s", "rad/s"),
-            ("shank_sagittal_velocity_ipsi_rad_s", "shank_sagittal_velocity_ipsi_rad_s", "rad/s"),
-            ("foot_sagittal_velocity_ipsi_rad_s", "foot_sagittal_velocity_ipsi_rad_s", "rad/s"),
-            ("thigh_sagittal_velocity_contra_rad_s", "thigh_sagittal_velocity_contra_rad_s", "rad/s"),
-            ("shank_sagittal_velocity_contra_rad_s", "shank_sagittal_velocity_contra_rad_s", "rad/s"),
-            ("foot_sagittal_velocity_contra_rad_s", "foot_sagittal_velocity_contra_rad_s", "rad/s"),
-        ]
-        grf_map = [
-            ("vertical_grf_ipsi_N", "vertical_grf_ipsi_N", "N"),
-            ("vertical_grf_contra_N", "vertical_grf_contra_N", "N"),
-        ]
-
         entries: list[tuple[str, str, str, str, pd.Series]] = []
 
-        def _add_signals(mapping: list[tuple[str, str, str]], color: str) -> None:
-            for column, name, unit in mapping:
-                if column in df.columns:
-                    series = pd.to_numeric(df[column], errors="coerce")
-                    if series.dropna().empty:
-                        continue
-                    entries.append((column, name, unit, color, series))
+        def _append_entry(column: str) -> None:
+            if column not in df.columns:
+                return
+            series = pd.to_numeric(df[column], errors="coerce")
+            if series.dropna().empty:
+                return
+            label = _resolve_display_name(column)
+            unit = _resolve_signal_unit(column)
+            color = _resolve_signal_color(column)
+            entries.append((column, label, unit, color, series))
 
-        _add_signals(angle_map, input_color)
-        _add_signals(velocity_map, input_color)
-        _add_signals(segment_angle_map, input_color)
-        _add_signals(segment_velocity_map, input_color)
-        _add_signals(grf_map, input_color)
+        for column in SIGNAL_ORDER:
+            _append_entry(column)
 
         for column in sorted(c for c in df.columns if c.startswith("torque_safe_")):
-            name = column.removeprefix("torque_safe_")
-            unit = "Nm/kg" if name.endswith("_Nm_kg") else "Nm"
-            series = pd.to_numeric(df[column], errors="coerce")
-            entries.append((column, name, unit, output_color, series))
+            _append_entry(column)
 
         feature_columns = set(col for col, _, _, _, _ in entries if not col.startswith("torque_safe_"))
         for column in sorted(c for c in df.columns if c not in feature_columns and not c.startswith("torque_") and not c.startswith("scheduler_") and c not in {"timestamp"}):
-            series = pd.to_numeric(df[column], errors="coerce")
-            if series.dropna().empty:
-                continue
-            entries.append((column, column, "", input_color, series))
+            _append_entry(column)
 
         if not entries:
             return

@@ -119,6 +119,11 @@ class RuntimeLoop:
                         torque_command_safe=safe_command,
                         scheduler=scheduler_snapshot,
                     )
+                    if self._artifacts is not None:
+                        try:
+                            self._artifacts.publish_realtime(feature_snapshot, safe_command)
+                        except Exception:  # pragma: no cover - defensive
+                            LOGGER.exception("Diagnostics realtime streaming failed")
                     if tick_hook is not None:
                         try:
                             tick_hook(feature_snapshot)

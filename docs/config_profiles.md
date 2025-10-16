@@ -119,8 +119,18 @@ Two ready-to-run examples live alongside the mock profiles:
   ridge/KNN ensemble exported to ONNX/joblib, driving knee/ankle joints.
 - `scripts/hardware_microstrain_vae.yaml`: MicroStrain bilateral IMU input
   wired to the semi-supervised kinematic VAE torque head.
+- `scripts/hardware_microstrain_mock.yaml`: Single MicroStrain IMU streamed into
+  the mock actuator/model pair for quick sensor smoke tests without an attached leg.
 
 Both profiles assume the `torque-modeling` repository is available next to this
 runtime checkout so the relative paths resolve without manual copying. Update
 the `port_map`/`OSLActuator` serial ports to match the connected hardware before
 deploying.
+
+## Live plotting with rtplot
+
+Pass `--rtplot` (optionally `--rtplot-host`) to `scripts/run.py` to mirror the
+diagnostics feed to `better-rtplot`. Diagnostics now group traces by unit
+(radians, rad/s, newtons, torques, …) into dedicated subplots so real-time
+streams stay legible. Only the client runs on the Pi; start `python -m rtplot.server`
+on a desktop to visualise the stream.

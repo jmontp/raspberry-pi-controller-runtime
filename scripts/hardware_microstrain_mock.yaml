@@ -1,0 +1,63 @@
+profile:
+  name: microstrain_mock_runtime
+  controller: pi_microstrain_mock
+
+input_signals:
+  - name: knee_flexion_angle_ipsi_rad
+    hardware: imu_microstrain
+  - name: knee_flexion_velocity_ipsi_rad_s
+    hardware: imu_microstrain
+  - name: ankle_dorsiflexion_angle_ipsi_rad
+    hardware: imu_microstrain
+  - name: ankle_dorsiflexion_velocity_ipsi_rad_s
+    hardware: imu_microstrain
+
+output_signals:
+  - name: knee_flexion_moment_ipsi_Nm
+    hardware: actuator_mock
+  - name: ankle_dorsiflexion_moment_ipsi_Nm
+    hardware: actuator_mock
+
+hardware:
+  sensors:
+    imu_microstrain:
+      class: rpc_runtime.sensors.imu.microstrain_3dm_gx5.Microstrain3DMGX5IMU
+      config:
+        calibration_samples: 300
+        calibration_interval_s: 0.002
+        port_map:
+          thigh_r: /dev/ttyIMU_thigh_r
+          shank_r: /dev/ttyIMU_shank_r
+          foot_r: /dev/ttyIMU_foot_r
+  actuators:
+    actuator_mock:
+      class: rpc_runtime.actuators.mock.MockActuator
+      config:
+        config_override:
+          joint_names:
+            - knee_flexion_moment_ipsi_Nm
+            - ankle_dorsiflexion_moment_ipsi_Nm
+
+controllers:
+  pi_microstrain_mock:
+    implementation: rpc_runtime.controllers.pi_controller.PIController
+    joints:
+      - knee_flexion_moment_ipsi_Nm
+      - ankle_dorsiflexion_moment_ipsi_Nm
+    config:
+      dt: 0.01
+      torque_scale: 0.1
+      torque_limit_nm: 15.0
+      gains:
+        kp:
+          knee_flexion_moment_ipsi_Nm: 0.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
+        ki:
+          knee_flexion_moment_ipsi_Nm: 0.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
+      config:
+        outputs:
+          knee_flexion_moment_ipsi_Nm: 0.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.0

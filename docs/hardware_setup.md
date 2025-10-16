@@ -6,6 +6,7 @@
    - GRF adapters use `BaseVerticalGRFConfig` for channel naming and staleness policies. Set `fault_strategy` to `fallback` if you prefer neutral force samples when packets drop.
 3. **Actuators** — Connect ActPack devices and verify they appear under `/dev/ttyActPack*`. The runtime sets current-control mode during `OSLActuator.start()`.
    - All actuator adapters inherit from `BaseActuator`, which validates joint membership and optional torque limits supplied via `BaseActuatorConfig`. If your hardware requires torque clamping rather than raising on limit violations, set `clamp_torque=True`. Diagnostics such as `command_count`, `last_command`, and any `ActuatorError` messages can be retrieved from `actuator.diagnostics` to aid in bring-up and fault analysis.
+   - For sensor-only shakedowns, `MockActuator` discards torque commands while recording them for diagnostics; see `scripts/hardware_microstrain_mock.yaml` for a MicroStrain-only profile that exercises the sensor pipeline without a leg attached.
 4. **Runtime Loop** — Launch using a profile-specific script (see `examples/demo_stand.py`). Monitor logs for fault flags reported by `OSLActuator.fault_if_needed()`.
 
 ## Alignment & Diagnostics Checklist
