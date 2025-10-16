@@ -4,73 +4,53 @@ profile:
 
 input_signals:
   - name: hip_flexion_angle_ipsi_rad
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: hip_flexion_velocity_ipsi_rad_s
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: thigh_sagittal_angle_ipsi_rad
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: thigh_sagittal_velocity_ipsi_rad_s
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: hip_flexion_angle_contra_rad
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: hip_flexion_velocity_contra_rad_s
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: thigh_sagittal_angle_contra_rad
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: thigh_sagittal_velocity_contra_rad_s
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: knee_flexion_angle_ipsi_rad
     hardware: imu_mock
   - name: knee_flexion_velocity_ipsi_rad_s
     hardware: imu_mock
   - name: shank_sagittal_angle_ipsi_rad
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: shank_sagittal_velocity_ipsi_rad_s
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: knee_flexion_angle_contra_rad
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: knee_flexion_velocity_contra_rad_s
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: shank_sagittal_angle_contra_rad
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: shank_sagittal_velocity_contra_rad_s
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: ankle_dorsiflexion_angle_ipsi_rad
     hardware: imu_mock
   - name: ankle_dorsiflexion_velocity_ipsi_rad_s
     hardware: imu_mock
   - name: foot_sagittal_angle_ipsi_rad
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: foot_sagittal_velocity_ipsi_rad_s
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: ankle_dorsiflexion_angle_contra_rad
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: ankle_dorsiflexion_velocity_contra_rad_s
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: foot_sagittal_angle_contra_rad
-    required: false
-    default: 0.0
+    hardware: imu_mock
   - name: foot_sagittal_velocity_contra_rad_s
-    required: false
-    default: 0.0
+    hardware: imu_mock
 
 output_signals:
   - name: knee_flexion_moment_ipsi_Nm

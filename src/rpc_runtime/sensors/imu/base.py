@@ -211,20 +211,54 @@ class BaseIMU(BaseSensor):
 
     def _map_signal(self, sample: IMUSample, name: str) -> float | None:
         """Translate canonical signal names into IMU sample values."""
-        joint_angle_mapping = {
-            "knee_flexion_angle_ipsi_rad": ("joint_angles_rad", 0),
-            "ankle_dorsiflexion_angle_ipsi_rad": ("joint_angles_rad", 1),
+        joint_angle_names = {
+            "hip_flexion_angle_ipsi_rad": "hip_r",
+            "knee_flexion_angle_ipsi_rad": "knee_r",
+            "ankle_dorsiflexion_angle_ipsi_rad": "ankle_r",
+            "hip_flexion_angle_contra_rad": "hip_l",
+            "knee_flexion_angle_contra_rad": "knee_l",
+            "ankle_dorsiflexion_angle_contra_rad": "ankle_l",
         }
-        joint_velocity_mapping = {
-            "knee_flexion_velocity_ipsi_rad_s": ("joint_velocities_rad_s", 0),
-            "ankle_dorsiflexion_velocity_ipsi_rad_s": ("joint_velocities_rad_s", 1),
+        joint_velocity_names = {
+            "hip_flexion_velocity_ipsi_rad_s": "hip_r",
+            "knee_flexion_velocity_ipsi_rad_s": "knee_r",
+            "ankle_dorsiflexion_velocity_ipsi_rad_s": "ankle_r",
+            "hip_flexion_velocity_contra_rad_s": "hip_l",
+            "knee_flexion_velocity_contra_rad_s": "knee_l",
+            "ankle_dorsiflexion_velocity_contra_rad_s": "ankle_l",
         }
-        if name in joint_angle_mapping:
-            attribute, index = joint_angle_mapping[name]
-            return self._resolve_joint_attribute(sample, attribute, index)
-        if name in joint_velocity_mapping:
-            attribute, index = joint_velocity_mapping[name]
-            return self._resolve_joint_attribute(sample, attribute, index)
+        segment_angle_names = {
+            "thigh_sagittal_angle_ipsi_rad": "thigh_r",
+            "shank_sagittal_angle_ipsi_rad": "shank_r",
+            "foot_sagittal_angle_ipsi_rad": "foot_r",
+            "thigh_sagittal_angle_contra_rad": "thigh_l",
+            "shank_sagittal_angle_contra_rad": "shank_l",
+            "foot_sagittal_angle_contra_rad": "foot_l",
+        }
+        segment_velocity_names = {
+            "thigh_sagittal_velocity_ipsi_rad_s": "thigh_r",
+            "shank_sagittal_velocity_ipsi_rad_s": "shank_r",
+            "foot_sagittal_velocity_ipsi_rad_s": "foot_r",
+            "thigh_sagittal_velocity_contra_rad_s": "thigh_l",
+            "shank_sagittal_velocity_contra_rad_s": "shank_l",
+            "foot_sagittal_velocity_contra_rad_s": "foot_l",
+        }
+        if name in joint_angle_names:
+            return self._resolve_named_joint(sample, "joint_angles_rad", joint_angle_names[name])
+        if name in joint_velocity_names:
+            return self._resolve_named_joint(
+                sample,
+                "joint_velocities_rad_s",
+                joint_velocity_names[name],
+            )
+        if name in segment_angle_names:
+            return self._resolve_named_segment(sample, "segment_angles_rad", segment_angle_names[name])
+        if name in segment_velocity_names:
+            return self._resolve_named_segment(
+                sample,
+                "segment_velocities_rad_s",
+                segment_velocity_names[name],
+            )
         return None
 
     def _resolve_joint_attribute(
@@ -235,6 +269,38 @@ class BaseIMU(BaseSensor):
     ) -> float | None:
         """Return a joint attribute (angle or velocity) when available."""
         if index < 0:
+            return None
+        data = getattr(sample, attribute, None)
+        if data is None:
+            return None
+        try:
+            return float(data[index])
+        except (IndexError, TypeError, ValueError):
+            return None
+
+    def _resolve_named_joint(
+        self,
+        sample: IMUSample,
+        attribute: str,
+        joint_name: str,
+    ) -> float | None:
+        """Resolve a joint attribute using the configured joint ordering."""
+        try:
+            index = self.joint_names.index(joint_name)
+        except ValueError:
+            return None
+        return self._resolve_joint_attribute(sample, attribute, index)
+
+    def _resolve_named_segment(
+        self,
+        sample: IMUSample,
+        attribute: str,
+        segment_name: str,
+    ) -> float | None:
+        """Resolve a segment attribute using the configured segment ordering."""
+        try:
+            index = self.segment_names.index(segment_name)
+        except ValueError:
             return None
         data = getattr(sample, attribute, None)
         if data is None:
