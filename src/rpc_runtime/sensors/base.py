@@ -50,8 +50,12 @@ class SensorDiagnostics:
     total_samples: int = 0
     max_stale_samples: int = 0
     max_stale_time_s: float = 0.0
+    max_consecutive_stale: int = 0
     recent_sample_periods: tuple[float, ...] = ()
     recent_sample_rates: tuple[float, ...] = ()
+    recent_event_timestamps: tuple[float, ...] = ()
+    recent_event_fresh: tuple[bool, ...] = ()
+    fresh_ratio_window: float | None = None
 
 
 @dataclass(slots=True)
@@ -83,6 +87,10 @@ class BaseSensor(abc.ABC):
             max_stale_time_s=self._config.max_stale_time_s,
         )
         self._history: Deque[float] = deque(maxlen=self._config.diagnostics_window)
+        self._event_history: Deque[tuple[float, bool]] = deque(
+            maxlen=self._config.diagnostics_window
+        )
+        self._event_origin: float | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -137,6 +145,16 @@ class BaseSensor(abc.ABC):
         self._diagnostics.recent_sample_rates = tuple(
             (1.0 / dt) if dt > 0 else math.inf for dt in self._history
         )
+        if self._event_history:
+            timestamps, fresh_flags = zip(*self._event_history)
+            fresh_ratio = sum(1.0 for flag in fresh_flags if flag) / len(fresh_flags)
+            self._diagnostics.recent_event_timestamps = tuple(timestamps)
+            self._diagnostics.recent_event_fresh = tuple(fresh_flags)
+            self._diagnostics.fresh_ratio_window = fresh_ratio
+        else:
+            self._diagnostics.recent_event_timestamps = ()
+            self._diagnostics.recent_event_fresh = ()
+            self._diagnostics.fresh_ratio_window = None
         return self._diagnostics
 
     def sample_period_histogram(self, bins: int = 10) -> tuple[tuple[float, ...], tuple[int, ...]]:
@@ -180,14 +198,20 @@ class BaseSensor(abc.ABC):
         fallback_factory: Callable[[float], object],
     ):
         """Track staleness and apply the configured strategy for missing data."""
+        event_time = time.monotonic()
         timestamp = getattr(sample, "timestamp", None) if sample is not None else None
-        now = time.monotonic() if timestamp is None else timestamp
+        now = event_time if timestamp is None else float(timestamp)
         reason = self._check_stale(now, fresh)
         if reason is not None:
-            return self._apply_fault_strategy(sample, now, reason, fallback_factory)
+            result = self._apply_fault_strategy(sample, now, reason, fallback_factory)
+            self._record_sample_event(event_time, False)
+            return result
         if sample is not None:
+            self._record_sample_event(event_time, True)
             return sample
-        return fallback_factory(now)
+        fallback_sample = fallback_factory(now)
+        self._record_sample_event(event_time, False)
+        return fallback_sample
 
     def _check_stale(self, now: float, fresh: bool) -> str | None:
         """Update counters and report a fault reason when thresholds are exceeded."""
@@ -206,6 +230,9 @@ class BaseSensor(abc.ABC):
 
         self._stale_samples += 1
         self._diagnostics.stale_samples = self._stale_samples
+        self._diagnostics.max_consecutive_stale = max(
+            self._diagnostics.max_consecutive_stale, self._stale_samples
+        )
         stale_time = 0.0
         if self._last_timestamp is not None:
             stale_time = now - self._last_timestamp
@@ -247,3 +274,10 @@ class BaseSensor(abc.ABC):
         if strategy == "warn" and sample is not None:
             return sample
         return fallback_sample
+
+    def _record_sample_event(self, timestamp: float, fresh: bool) -> None:
+        """Record a sampling event for diagnostics reporting."""
+        if self._event_origin is None:
+            self._event_origin = timestamp
+        relative = max(timestamp - self._event_origin, 0.0)
+        self._event_history.append((relative, fresh))

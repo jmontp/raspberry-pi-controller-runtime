@@ -10,13 +10,50 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Sequence, TYPE_CHECKING
 
 from .diagnostics import CSVDiagnosticsSink, DiagnosticsSink
 from ..sensors.base import BaseSensor
 
 LOGGER = logging.getLogger(__name__)
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ..config.models import SignalRoute
+
+GLOSSARY_ENTRIES: tuple[tuple[str, str], ...] = (
+    (
+        "Sensor",
+        "Hardware adapter providing the data for this signal.",
+    ),
+    (
+        "Fresh Sample Coverage",
+        "Share of scheduler ticks where the sensor produced a fresh reading; parentheses show the raw fresh-count.",
+    ),
+    (
+        "Max Stale Run (ticks)",
+        "Longest streak of consecutive stale ticks observed during the run.",
+    ),
+    (
+        "Missed Samples",
+        "Scheduler ticks without a fresh reading (estimated as total ticks minus fresh samples).",
+    ),
+    (
+        "Delivered Fresh Rate (Hz)",
+        "Effective fresh-data bandwidth after accounting for missed ticks (coverage × loop rate, or samples ÷ run time).",
+    ),
+    (
+        "Longest Gap (s)",
+        "Longest observed interval between two fresh samples within the diagnostics window.",
+    ),
+    (
+        "Dropout intervals",
+        "Time spans where the inter-sample period exceeded the configured `max_stale_time_s` for the sensor.",
+    ),
+    (
+        "Data Availability Timeline",
+        "Timeline highlighting stale/missing events as red bars; blank regions correspond to fresh readings.",
+    ),
+)
 
 def _safe_profile_name(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)
@@ -111,6 +148,8 @@ class DiagnosticsArtifacts:
     sink: DiagnosticsSink | None
     profile_name: str | None = None
     timestamp_str: str | None = None
+    target_frequency_hz: float | None = None
+    sensor_signal_map: dict[str, tuple[str, ...]] = field(default_factory=dict)
     _loop_periods: list[float] = field(default_factory=list, init=False)
     _last_tick_time: float | None = field(default=None, init=False)
 
@@ -122,8 +161,21 @@ class DiagnosticsArtifacts:
         profile_path: Path,
         profile_name: str,
         enable_csv: bool = True,
+        target_frequency_hz: float | None = None,
+        signal_routes: Sequence["SignalRoute"] | None = None,
     ) -> "DiagnosticsArtifacts":
         """Initialise a diagnostics run directory and CSV sink."""
+        signal_map: dict[str, tuple[str, ...]] = {}
+        if signal_routes is not None:
+            grouped: dict[str, set[str]] = {}
+            for route in signal_routes:
+                provider = getattr(route, "provider", None)
+                name = getattr(route, "name", None)
+                if provider is None or name is None:
+                    continue
+                grouped.setdefault(provider, set()).add(name)
+            signal_map = {alias: tuple(sorted(names)) for alias, names in grouped.items()}
+
         if root is None:
             return cls(
                 enabled=False,
@@ -132,6 +184,8 @@ class DiagnosticsArtifacts:
                 sensors_dir=Path(),
                 running_stats_dir=Path(),
                 sink=None,
+                target_frequency_hz=target_frequency_hz,
+                sensor_signal_map=signal_map,
             )
 
         timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
@@ -161,6 +215,8 @@ class DiagnosticsArtifacts:
             sink=sink,
             profile_name=profile_name,
             timestamp_str=timestamp,
+            target_frequency_hz=target_frequency_hz,
+            sensor_signal_map=signal_map,
         )
 
     def diagnostics_enabled(self) -> bool:
@@ -181,7 +237,7 @@ class DiagnosticsArtifacts:
         if not self.enabled:
             return
         loop_stats = self._write_scheduler_metrics()
-        sensor_summaries = self._write_sensor_metrics(sensors)
+        sensor_summaries = self._write_sensor_metrics(sensors, loop_stats)
         self._write_report(loop_stats, sensor_summaries)
 
     # ------------------------------------------------------------------
@@ -224,8 +280,27 @@ class DiagnosticsArtifacts:
             "max_period_s": max_period,
         }
 
-    def _write_sensor_metrics(self, sensors: Mapping[str, BaseSensor]) -> list[dict[str, object]]:
+    def _write_sensor_metrics(
+        self,
+        sensors: Mapping[str, BaseSensor],
+        loop_stats: Mapping[str, float | int | None],
+    ) -> list[dict[str, object]]:
         summaries: list[dict[str, object]] = []
+        expected_ticks_raw = loop_stats.get("ticks")
+        expected_ticks = expected_ticks_raw if isinstance(expected_ticks_raw, int) and expected_ticks_raw > 0 else None
+        duration_raw = loop_stats.get("duration_s")
+        duration_s = duration_raw if isinstance(duration_raw, (int, float)) and duration_raw > 0 else None
+        reference_rate = loop_stats.get("mean_rate_hz")
+        if not isinstance(reference_rate, (int, float)) or not math.isfinite(reference_rate):
+            reference_rate = None
+        if reference_rate is None:
+            ref_target = self.target_frequency_hz
+            if isinstance(ref_target, (int, float)) and math.isfinite(ref_target) and ref_target > 0:
+                reference_rate = ref_target
+        if reference_rate is not None and reference_rate <= 0:
+            reference_rate = None
+        expected_period_s = (1.0 / reference_rate) if reference_rate else None
+
         for alias, sensor in sensors.items():
             diagnostics = getattr(sensor, "diagnostics", None)
             if diagnostics is None:
@@ -240,45 +315,109 @@ class DiagnosticsArtifacts:
             _write_series(target / "sample_rates_hz.csv", rates, header="hz")
             rate_edges, rate_counts = sensor.sample_rate_histogram(bins=10)
             _write_histogram_counts(target / "sample_rate_histogram.csv", rate_edges, rate_counts)
-            rate_plot_path = None
+
+            sensor_config = getattr(sensor, "config", None)
+            drop_intervals = self._compute_drop_intervals(periods, sensor_config)
+            events = list(
+                zip(
+                    getattr(diagnostics, "recent_event_timestamps", ()) or (),
+                    getattr(diagnostics, "recent_event_fresh", ()) or (),
+                )
+            )
+            availability_plot_path = None
             try:
-                rate_plot_path = self._render_rate_plot(alias, rates, periods, target)
+                availability_plot_path = self._render_availability_plot(
+                    alias,
+                    events,
+                    target,
+                    run_duration=duration_s,
+                    expected_period_s=expected_period_s,
+                )
             except Exception as exc:  # pragma: no cover - best effort
-                LOGGER.warning("Failed to render rate plot for '%s': %s", alias, exc)
+                LOGGER.warning("Failed to render availability plot for '%s': %s", alias, exc)
+            total_samples = getattr(diagnostics, "total_samples", 0)
+            coverage_pct: float | None = None
+            coverage_ratio: float | None = None
+            missed_samples: int | None = None
+            if expected_ticks is not None and expected_ticks > 0:
+                coverage_ratio = min(max(total_samples / expected_ticks, 0.0), 1.0)
+                coverage_pct = coverage_ratio * 100.0
+                missed_samples = max(expected_ticks - total_samples, 0)
+            effective_rate: float | None = None
+            if coverage_ratio is not None and reference_rate is not None:
+                effective_rate = coverage_ratio * reference_rate
+            elif duration_s is not None and duration_s > 0:
+                effective_rate = total_samples / duration_s if total_samples > 0 else 0.0
+            if effective_rate is not None and reference_rate is not None:
+                effective_rate = min(effective_rate, reference_rate)
+
+            hz_estimate = getattr(diagnostics, "hz_estimate", None)
+            hz_min = getattr(diagnostics, "hz_min", None)
+            hz_max = getattr(diagnostics, "hz_max", None)
+            hz_mean = getattr(diagnostics, "hz_mean", None)
+            fresh_ratio_window = getattr(diagnostics, "fresh_ratio_window", None)
+            if isinstance(fresh_ratio_window, (int, float)) and math.isfinite(fresh_ratio_window):
+                fresh_ratio_pct = fresh_ratio_window * 100.0
+            else:
+                fresh_ratio_pct = None
+            max_consecutive_stale = getattr(diagnostics, "max_consecutive_stale", None)
+            current_stale = getattr(diagnostics, "stale_samples", 0)
+
             summary_lines = [
-                f"total_samples={getattr(diagnostics, 'total_samples', 0)}",
-                f"stale_samples={getattr(diagnostics, 'stale_samples', 0)}",
-                f"hz_estimate={getattr(diagnostics, 'hz_estimate', None)}",
-                f"hz_min={getattr(diagnostics, 'hz_min', None)}",
-                f"hz_max={getattr(diagnostics, 'hz_max', None)}",
-                f"hz_mean={getattr(diagnostics, 'hz_mean', None)}",
+                f"total_samples={total_samples}",
+                f"missed_samples={missed_samples}",
+                f"stale_samples_current={current_stale}",
+                f"max_consecutive_stale={max_consecutive_stale}",
+                f"hz_estimate={hz_estimate}",
+                f"hz_min={hz_min}",
+                f"hz_max={hz_max}",
+                f"hz_mean={hz_mean}",
+                f"coverage_pct={coverage_pct}",
+                f"effective_rate_hz={effective_rate}",
+                f"fresh_ratio_window={fresh_ratio_window}",
             ]
             try:
                 (target / "summary.txt").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
             except Exception as exc:  # pragma: no cover - best effort
                 LOGGER.warning("Failed to write sensor summary for '%s': %s", alias, exc)
-            summaries.append(
-                {
-                    "alias": alias,
-                    "total_samples": getattr(diagnostics, "total_samples", 0),
-                    "stale_samples": getattr(diagnostics, "stale_samples", 0),
-                    "hz_estimate": getattr(diagnostics, "hz_estimate", None),
-                    "hz_min": getattr(diagnostics, "hz_min", None),
-                    "hz_max": getattr(diagnostics, "hz_max", None),
-                    "hz_mean": getattr(diagnostics, "hz_mean", None),
-                    "max_period_s": max(periods) if periods else None,
-                    "period_hist": (period_edges, period_counts),
-                    "rate_hist": (rate_edges, rate_counts),
-                    "periods_csv": target / "sample_periods.csv",
-                    "rates_csv": target / "sample_rates_hz.csv",
-                    "period_hist_csv": target / "sample_period_histogram.csv",
-                    "rate_hist_csv": target / "sample_rate_histogram.csv",
-                    "summary_path": target / "summary.txt",
-                    "config": getattr(sensor, "config", None),
-                    "rate_plot": rate_plot_path,
-                    "drop_intervals": self._compute_drop_intervals(periods, getattr(sensor, "config", None)),
-                }
-            )
+            sensor_summary = {
+                "sensor_alias": alias,
+                "total_samples": total_samples,
+                "missed_samples": missed_samples,
+                "stale_samples": current_stale,
+                "max_consecutive_stale": max_consecutive_stale,
+                "hz_estimate": hz_estimate,
+                "hz_min": hz_min,
+                "hz_max": hz_max,
+                "hz_mean": hz_mean,
+                "coverage_pct": coverage_pct,
+                "coverage_ratio": coverage_ratio,
+                "effective_rate_hz": effective_rate,
+                "fresh_ratio_window": fresh_ratio_window,
+                "fresh_ratio_pct": fresh_ratio_pct,
+                "events_window": len(events),
+                "max_period_s": max(periods) if periods else None,
+                "period_hist": (period_edges, period_counts),
+                "rate_hist": (rate_edges, rate_counts),
+                "periods_csv": target / "sample_periods.csv",
+                "rates_csv": target / "sample_rates_hz.csv",
+                "period_hist_csv": target / "sample_period_histogram.csv",
+                "rate_hist_csv": target / "sample_rate_histogram.csv",
+                "summary_path": target / "summary.txt",
+                "config": sensor_config,
+                "availability_plot": availability_plot_path,
+                "drop_intervals": drop_intervals,
+            }
+            signals = self.sensor_signal_map.get(alias, ())
+            if signals:
+                for signal_name in signals:
+                    entry = dict(sensor_summary)
+                    entry["signal_name"] = signal_name
+                    summaries.append(entry)
+            else:
+                entry = dict(sensor_summary)
+                entry["signal_name"] = alias
+                summaries.append(entry)
         return summaries
 
     def _write_report(
@@ -299,7 +438,16 @@ class DiagnosticsArtifacts:
         lines.append(
             f"| Duration (s) | {duration:.2f} |" if isinstance(duration, (int, float)) else "| Duration (s) | N/A |"
         )
-        lines.append(f"| Ticks | {ticks} |")
+        if isinstance(ticks, int):
+            lines.append(f"| Ticks | {ticks} |")
+        else:
+            lines.append("| Ticks | N/A |")
+        target_rate = self.target_frequency_hz
+        if isinstance(target_rate, (int, float)) and math.isfinite(target_rate):
+            lines.append(f"| Target Loop Rate (Hz) | {target_rate:.2f} |")
+        mean_rate_overall = loop_stats.get("mean_rate_hz")
+        if isinstance(mean_rate_overall, (int, float)) and math.isfinite(mean_rate_overall):
+            lines.append(f"| Mean Observed Rate (Hz) | {mean_rate_overall:.2f} |")
         lines.append(f"| Diagnostics Path | `{self.run_dir}` |")
         lines.append("| Data CSV | [data.csv](data.csv) |")
         lines.append("")
@@ -311,8 +459,8 @@ class DiagnosticsArtifacts:
             "Min/Max rows refer to fastest/slowest control cycles."
         )
         lines.append(
-            "- **Sensors** tables show sample counts and observed bandwidth. "
-            "Histograms indicate how often each sensor reported within a given period bin."
+            "- **Sensors** tables show fresh coverage, stale streaks, and data availability. "
+            "CSV links capture detailed period and rate histograms."
         )
         lines.append("- ⚠️ Alerts call out potential problems (e.g., dropouts exceeding configured tolerances).")
         lines.append("")
@@ -348,47 +496,41 @@ class DiagnosticsArtifacts:
         lines.append("")
 
         alerts: list[str] = []
-        for summary in sorted(sensor_summaries, key=lambda s: s["alias"]):
-            alias = summary["alias"]
-            lines.append(f"### {alias}")
+        for summary in sorted(sensor_summaries, key=lambda s: s["signal_name"]):
+            signal_name = summary["signal_name"]
+            sensor_alias = summary.get("sensor_alias")
+            sensor_label = sensor_alias if sensor_alias else "unassigned sensor"
+            lines.append(f"### {signal_name}")
             lines.append("")
             lines.append("| Metric | Value |")
             lines.append("|--------|-------|")
-            lines.append(f"| Total Samples | {summary['total_samples']} |")
-            stale = summary["stale_samples"]
-            lines.append(f"| Stale Samples | {stale} |")
-            hz_mean = summary["hz_mean"]
-            hz_min = summary["hz_min"]
-            hz_max = summary["hz_max"]
-            lines.append(f"| Mean Rate (Hz) | {_fmt(hz_mean)} |")
-            lines.append(f"| Min Rate (Hz) | {_fmt(hz_min)} |")
-            lines.append(f"| Max Rate (Hz) | {_fmt(hz_max)} |")
+            if sensor_alias:
+                lines.append(f"| Sensor | `{sensor_alias}` |")
+            coverage_pct = summary.get("coverage_pct")
+            total_samples = summary.get("total_samples")
+            if isinstance(coverage_pct, (int, float)):
+                coverage_display = f"{coverage_pct:.1f}%"
+                if isinstance(total_samples, int):
+                    coverage_display += f" ({total_samples})"
+            else:
+                coverage_display = str(total_samples)
+            lines.append(f"| Fresh Sample Coverage | {coverage_display} |")
+            missed_samples = summary.get("missed_samples")
+            if isinstance(missed_samples, int):
+                lines.append(f"| Missed Samples | {missed_samples} |")
+            max_stale = summary.get("max_consecutive_stale")
+            if isinstance(max_stale, int):
+                lines.append(f"| Max Stale Run (ticks) | {max_stale} |")
             max_period = summary["max_period_s"]
             lines.append(f"| Longest Gap (s) | {_fmt(max_period)} |")
+            effective_rate = summary.get("effective_rate_hz")
+            lines.append(f"| Delivered Fresh Rate (Hz) | {_fmt(effective_rate)} |")
             lines.append("")
 
-            period_edges, period_counts = summary["period_hist"]
-            if period_edges:
-                lines.append("| Period Bin (s) | Count |")
-                lines.append("|----------------|-------|")
-                for idx, count in enumerate(period_counts):
-                    start = period_edges[idx]
-                    end = period_edges[idx + 1] if idx + 1 < len(period_edges) else period_edges[idx]
-                    lines.append(f"| {start:.3f}–{end:.3f} | {count} |")
-            lines.append("")
-
-            lines.append(
-                "Links: "
-                f"[periods]({summary['periods_csv'].relative_to(self.run_dir).as_posix()}), "
-                f"[rates]({summary['rates_csv'].relative_to(self.run_dir).as_posix()}), "
-                f"[period_hist]({summary['period_hist_csv'].relative_to(self.run_dir).as_posix()}), "
-                f"[rate_hist]({summary['rate_hist_csv'].relative_to(self.run_dir).as_posix()})"
-            )
-            lines.append("")
-
-            if summary.get("rate_plot") is not None and summary["rate_plot"].exists():
-                rel_plot = summary["rate_plot"].relative_to(self.run_dir)
-                lines.append(f"![Sample Rate Timeline]({rel_plot.as_posix()})")
+            availability_plot = summary.get("availability_plot")
+            if availability_plot is not None and availability_plot.exists():
+                rel_plot = availability_plot.relative_to(self.run_dir)
+                lines.append(f"![Data Availability Timeline]({rel_plot.as_posix()})")
                 lines.append("")
 
             drop_intervals = summary.get("drop_intervals") or []
@@ -407,11 +549,12 @@ class DiagnosticsArtifacts:
                 max_stale_time = getattr(config, "max_stale_time_s", None)
                 if max_stale_time is not None and isinstance(max_period, (int, float)) and max_period > max_stale_time:
                     alerts.append(
-                        f"⚠️ `{alias}` observed gap {max_period:.2f}s exceeding configured "
+                        f"⚠️ `{signal_name}` ({sensor_label}) observed gap {max_period:.2f}s exceeding configured "
                         f"max_stale_time_s={max_stale_time:.2f}s."
                     )
-            if isinstance(stale, int) and stale > 0:
-                alerts.append(f"⚠️ `{alias}` reported {stale} stale samples.")
+            stale_current = summary.get("stale_samples")
+            if isinstance(stale_current, int) and stale_current > 0:
+                alerts.append(f"⚠️ `{signal_name}` ({sensor_label}) reported {stale_current} stale samples.")
 
         lines.append("## Alerts")
         lines.append("")
@@ -422,16 +565,27 @@ class DiagnosticsArtifacts:
             lines.append("- ✅ No notable diagnostics alerts recorded.")
         lines.append("")
 
+        if GLOSSARY_ENTRIES:
+            lines.append("## Glossary")
+            lines.append("")
+            lines.append("| Metric | Meaning |")
+            lines.append("|--------|---------|")
+            for term, description in GLOSSARY_ENTRIES:
+                lines.append(f"| {term} | {description} |")
+            lines.append("")
+
         report_path.write_text("\n".join(lines), encoding="utf-8")
 
-    def _render_rate_plot(
+    def _render_availability_plot(
         self,
         alias: str,
-        rates: Sequence[float],
-        periods: Sequence[float],
+        events: Sequence[tuple[float, bool]],
         target_dir: Path,
+        *,
+        run_duration: float | None,
+        expected_period_s: float | None,
     ) -> Path | None:
-        if not rates or not periods:
+        if not events:
             return None
         try:
             import matplotlib
@@ -441,19 +595,35 @@ class DiagnosticsArtifacts:
         except Exception:
             return None
 
-        times: list[float] = []
-        cumulative = 0.0
-        for period in periods:
-            cumulative += period
-            times.append(cumulative)
+        timestamps = [float(ts) for ts, _ in events]
+        freshness = [bool(flag) for _, flag in events]
+        if not timestamps:
+            return None
+        start_time = timestamps[0]
+        rel_times = [max(ts - start_time, 0.0) for ts in timestamps]
 
-        path = target_dir / "sample_rate_timeseries.png"
-        fig, ax = plt.subplots(figsize=(6, 2.5))
-        ax.plot(times[: len(rates)], rates, color="#2a4365", linewidth=1.2)
-        ax.set_title(f"{alias} Sample Rate")
-        ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Rate (Hz)")
-        ax.grid(True, linestyle="--", alpha=0.4)
+        path = target_dir / "data_availability.png"
+        fig, ax = plt.subplots(figsize=(6, 2.0))
+        span_end = run_duration if isinstance(run_duration, (int, float)) and run_duration > 0 else None
+        if span_end is None:
+            tail_extension = expected_period_s if isinstance(expected_period_s, (int, float)) and expected_period_s > 0 else 0.1
+            span_end = rel_times[-1] + tail_extension
+        span_end = max(span_end, rel_times[-1] if rel_times else 0.1, 0.1)
+        for time_value, is_fresh in zip(rel_times, freshness):
+            if not is_fresh:
+                ax.axvline(time_value, color="#e53e3e", linewidth=1.4, alpha=0.9)
+
+        ax.set_title(f"{alias} Data Availability")
+        ax.set_xlabel("Time since first event (s)")
+        ax.set_xlim(0.0, span_end)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_yticks([])
+        ax.set_ylabel("")
+        for spine in ("left", "right", "top"):
+            ax.spines[spine].set_visible(False)
+        ax.spines["bottom"].set_color("#4a5568")
+        ax.spines["bottom"].set_linewidth(0.8)
+        ax.grid(False)
         fig.tight_layout()
         try:
             fig.savefig(path, dpi=150, format="png")

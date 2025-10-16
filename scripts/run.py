@@ -99,6 +99,8 @@ def run_loop(
         profile_path=profile_path,
         profile_name=effective_profile_name,
         enable_csv=diagnostics_root is not None,
+        target_frequency_hz=frequency_hz,
+        signal_routes=profile.signal_routes,
     )
 
     loop = RuntimeLoop(
