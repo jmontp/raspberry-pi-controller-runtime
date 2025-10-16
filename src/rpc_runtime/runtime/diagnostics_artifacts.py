@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import shutil
+import statistics
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -107,6 +108,8 @@ class DiagnosticsArtifacts:
     sensors_dir: Path
     running_stats_dir: Path
     sink: DiagnosticsSink | None
+    profile_name: str | None = None
+    timestamp_str: str | None = None
     _loop_periods: list[float] = field(default_factory=list, init=False)
     _last_tick_time: float | None = field(default=None, init=False)
 
@@ -152,6 +155,8 @@ class DiagnosticsArtifacts:
             sensors_dir=sensors_dir,
             running_stats_dir=running_stats_dir,
             sink=sink,
+            profile_name=profile_name,
+            timestamp_str=timestamp,
         )
 
     def diagnostics_enabled(self) -> bool:
@@ -171,24 +176,52 @@ class DiagnosticsArtifacts:
         """Persist aggregated scheduler and sensor diagnostics."""
         if not self.enabled:
             return
-        self._write_scheduler_metrics()
-        self._write_sensor_metrics(sensors)
+        loop_stats = self._write_scheduler_metrics()
+        sensor_summaries = self._write_sensor_metrics(sensors)
+        self._write_report(loop_stats, sensor_summaries)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _write_scheduler_metrics(self) -> None:
+    def _write_scheduler_metrics(self) -> dict[str, float | int | None]:
         periods = tuple(self._loop_periods)
         rates = [1.0 / p for p in periods if p > 0]
         if not rates:
             _write_histogram_csv(self.running_stats_dir / "loop_rate_histogram.csv", (), bins=10)
-            return
+            return {
+                "ticks": 0,
+                "duration_s": 0.0,
+                "min_rate_hz": None,
+                "mean_rate_hz": None,
+                "max_rate_hz": None,
+                "min_period_s": None,
+                "mean_period_s": None,
+                "max_period_s": None,
+            }
         _write_histogram_csv(self.running_stats_dir / "loop_rate_histogram.csv", rates, bins=10)
         _write_series(self.running_stats_dir / "loop_rates_hz.csv", rates, header="hz")
         _render_histogram_png(self.running_stats_dir / "loop_rate_histogram.png", rates, bins=10)
+        duration = sum(periods)
+        min_period = min(periods) if periods else None
+        max_period = max(periods) if periods else None
+        mean_period = statistics.mean(periods) if periods else None
+        min_rate = min(rates) if rates else None
+        max_rate = max(rates) if rates else None
+        mean_rate = statistics.mean(rates) if rates else None
+        return {
+            "ticks": len(periods),
+            "duration_s": duration,
+            "min_rate_hz": min_rate,
+            "mean_rate_hz": mean_rate,
+            "max_rate_hz": max_rate,
+            "min_period_s": min_period,
+            "mean_period_s": mean_period,
+            "max_period_s": max_period,
+        }
 
-    def _write_sensor_metrics(self, sensors: Mapping[str, BaseSensor]) -> None:
+    def _write_sensor_metrics(self, sensors: Mapping[str, BaseSensor]) -> list[dict[str, object]]:
+        summaries: list[dict[str, object]] = []
         for alias, sensor in sensors.items():
             diagnostics = getattr(sensor, "diagnostics", None)
             if diagnostics is None:
@@ -215,3 +248,135 @@ class DiagnosticsArtifacts:
                 (target / "summary.txt").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
             except Exception as exc:  # pragma: no cover - best effort
                 LOGGER.warning("Failed to write sensor summary for '%s': %s", alias, exc)
+            summaries.append(
+                {
+                    "alias": alias,
+                    "total_samples": getattr(diagnostics, "total_samples", 0),
+                    "stale_samples": getattr(diagnostics, "stale_samples", 0),
+                    "hz_estimate": getattr(diagnostics, "hz_estimate", None),
+                    "hz_min": getattr(diagnostics, "hz_min", None),
+                    "hz_max": getattr(diagnostics, "hz_max", None),
+                    "hz_mean": getattr(diagnostics, "hz_mean", None),
+                    "max_period_s": max(periods) if periods else None,
+                    "period_hist": (period_edges, period_counts),
+                    "rate_hist": (rate_edges, rate_counts),
+                    "periods_csv": target / "sample_periods.csv",
+                    "rates_csv": target / "sample_rates_hz.csv",
+                    "period_hist_csv": target / "sample_period_histogram.csv",
+                    "rate_hist_csv": target / "sample_rate_histogram.csv",
+                    "summary_path": target / "summary.txt",
+                    "config": getattr(sensor, "config", None),
+                }
+            )
+        return summaries
+
+    def _write_report(
+        self,
+        loop_stats: dict[str, float | int | None],
+        sensor_summaries: list[dict[str, object]],
+    ) -> None:
+        report_path = self.run_dir / "report.md"
+        lines: list[str] = []
+        profile_display = self.profile_name or "runtime"
+        timestamp = self.timestamp_str or ""
+        lines.append(f"# Run Report – {profile_display} ({timestamp})")
+        lines.append("")
+        lines.append("| Metric | Value |")
+        lines.append("|--------|-------|")
+        duration = loop_stats.get("duration_s")
+        ticks = loop_stats.get("ticks")
+        lines.append(f"| Duration (s) | {duration:.2f} |" if isinstance(duration, (int, float)) else "| Duration (s) | N/A |")
+        lines.append(f"| Ticks | {ticks} |")
+        lines.append(f"| Diagnostics Path | `{self.run_dir}` |")
+        lines.append("")
+
+        lines.append("## Loop Performance")
+        lines.append("")
+        lines.append("| Stat | Period (ms) | Rate (Hz) |")
+        lines.append("|------|-------------|-----------|")
+        min_period = loop_stats.get("min_period_s")
+        mean_period = loop_stats.get("mean_period_s")
+        max_period = loop_stats.get("max_period_s")
+        min_rate = loop_stats.get("min_rate_hz")
+        mean_rate = loop_stats.get("mean_rate_hz")
+        max_rate = loop_stats.get("max_rate_hz")
+
+        def _fmt(value: float | None, scale: float = 1.0, decimals: int = 2) -> str:
+            if value is None:
+                return "N/A"
+            return f"{value * scale:.{decimals}f}"
+
+        lines.append(f"| Min | {_fmt(min_period, 1000.0)} | {_fmt(max_rate)} |")
+        lines.append(f"| Mean | {_fmt(mean_period, 1000.0)} | {_fmt(mean_rate)} |")
+        lines.append(f"| Max | {_fmt(max_period, 1000.0)} | {_fmt(min_rate)} |")
+        lines.append("")
+
+        histogram_path = self.running_stats_dir / "loop_rate_histogram.png"
+        if histogram_path.exists():
+            rel_histogram = histogram_path.relative_to(self.run_dir)
+            lines.append(f"![Loop Rate Histogram]({rel_histogram.as_posix()})")
+            lines.append("")
+
+        lines.append("## Sensors")
+        lines.append("")
+
+        alerts: list[str] = []
+        for summary in sorted(sensor_summaries, key=lambda s: s["alias"]):
+            alias = summary["alias"]
+            lines.append(f"### {alias}")
+            lines.append("")
+            lines.append("| Metric | Value |")
+            lines.append("|--------|-------|")
+            lines.append(f"| Total Samples | {summary['total_samples']} |")
+            stale = summary["stale_samples"]
+            lines.append(f"| Stale Samples | {stale} |")
+            hz_mean = summary["hz_mean"]
+            hz_min = summary["hz_min"]
+            hz_max = summary["hz_max"]
+            lines.append(f"| Mean Rate (Hz) | {_fmt(hz_mean)} |")
+            lines.append(f"| Min Rate (Hz) | {_fmt(hz_min)} |")
+            lines.append(f"| Max Rate (Hz) | {_fmt(hz_max)} |")
+            max_period = summary["max_period_s"]
+            lines.append(f"| Longest Gap (s) | {_fmt(max_period)} |")
+            lines.append("")
+
+            period_edges, period_counts = summary["period_hist"]
+            if period_edges:
+                lines.append("| Period Bin (s) | Count |")
+                lines.append("|----------------|-------|")
+                for idx, count in enumerate(period_counts):
+                    start = period_edges[idx]
+                    end = period_edges[idx + 1] if idx + 1 < len(period_edges) else period_edges[idx]
+                    lines.append(f"| {start:.3f}–{end:.3f} | {count} |")
+                lines.append("")
+
+            lines.append(
+                "Links: "
+                f"[periods]({summary['periods_csv'].relative_to(self.run_dir).as_posix()}), "
+                f"[rates]({summary['rates_csv'].relative_to(self.run_dir).as_posix()}), "
+                f"[period_hist]({summary['period_hist_csv'].relative_to(self.run_dir).as_posix()}), "
+                f"[rate_hist]({summary['rate_hist_csv'].relative_to(self.run_dir).as_posix()})"
+            )
+            lines.append("")
+
+            config = summary.get("config")
+            if config is not None:
+                max_stale_time = getattr(config, "max_stale_time_s", None)
+                if max_stale_time is not None and isinstance(max_period, (int, float)) and max_period > max_stale_time:
+                    alerts.append(
+                        f"⚠️ `{alias}` observed gap {max_period:.2f}s exceeding configured "
+                        f"max_stale_time_s={max_stale_time:.2f}s."
+                    )
+            if isinstance(stale, int) and stale > 0:
+                alerts.append(f"⚠️ `{alias}` reported {stale} stale samples.")
+
+        lines.append("## Alerts")
+        lines.append("")
+        if alerts:
+            for alert in alerts:
+                lines.append(f"- {alert}")
+        else:
+            lines.append("- ✅ No notable diagnostics alerts recorded.")
+        lines.append("")
+
+        report_path.write_text("\n".join(lines), encoding="utf-8")

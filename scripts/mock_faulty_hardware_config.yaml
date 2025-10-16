@@ -1,0 +1,83 @@
+profile:
+  name: mock_faulty_runtime
+  controller: pi_mock
+
+input_signals:
+  - name: knee_flexion_angle_ipsi_rad
+    hardware: imu_faulty_burst
+  - name: knee_flexion_velocity_ipsi_rad_s
+    hardware: imu_faulty_dropout
+  - name: ankle_dorsiflexion_angle_ipsi_rad
+    hardware: imu_faulty_burst
+  - name: ankle_dorsiflexion_velocity_ipsi_rad_s
+    hardware: imu_faulty_dropout
+  - name: vertical_grf_ipsi_N
+    hardware: vertical_grf_mock
+    required: false
+
+output_signals:
+  - name: knee_flexion_moment_ipsi_Nm
+    hardware: actuator_mock
+  - name: ankle_dorsiflexion_moment_ipsi_Nm
+    hardware: actuator_mock
+
+hardware:
+  sensors:
+    imu_faulty_burst:
+      class: rpc_runtime.sensors.imu.mock_faulty.MockFaultyIMU
+      config:
+        loop: true
+        seed: 7
+        drop_probability: 0.4
+        drop_range: [1, 4]
+        dropout_probability: 0.0
+        config_override:
+          fault_strategy: fallback
+          max_stale_samples: 200
+          diagnostics_window: 256
+    imu_faulty_dropout:
+      class: rpc_runtime.sensors.imu.mock_faulty.MockFaultyIMU
+      config:
+        loop: true
+        seed: 13
+        drop_probability: 0.1
+        drop_range: [1, 2]
+        dropout_probability: 0.2
+        dropout_frames: 8
+        config_override:
+          fault_strategy: fallback
+          max_stale_samples: 200
+          diagnostics_window: 256
+    vertical_grf_mock:
+      class: rpc_runtime.sensors.grf.mock.MockVerticalGRF
+      config:
+        loop: true
+  actuators:
+    actuator_mock:
+      class: rpc_runtime.actuators.mock.MockActuator
+      config: {}
+
+controllers:
+  pi_mock:
+    implementation: rpc_runtime.controllers.pi_controller.PIController
+    joints:
+      - knee_flexion_moment_ipsi_Nm
+      - ankle_dorsiflexion_moment_ipsi_Nm
+    description: "PI controller bound to faulty mock sensors for diagnostics testing."
+    config:
+      dt: 0.01
+      torque_scale: 0.1
+      torque_limit_nm: 10.0
+      gains:
+        kp:
+          knee_flexion_moment_ipsi_Nm: 0.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
+        ki:
+          knee_flexion_moment_ipsi_Nm: 0.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
+      config:
+        outputs:
+          knee_flexion_moment_ipsi_Nm: 0.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.0

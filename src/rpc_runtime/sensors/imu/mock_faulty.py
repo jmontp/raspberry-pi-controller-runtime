@@ -24,6 +24,8 @@ class MockFaultyIMU(MockIMU):
         dropout_frames: int | None = None,
         seed: int | None = None,
     ) -> None:
+        if isinstance(config_override, dict):
+            config_override = BaseIMUConfig(**config_override)
         super().__init__(samples=samples, loop=loop, config_override=config_override)
         if not 0.0 <= drop_probability <= 1.0:
             raise ValueError("drop_probability must be within [0.0, 1.0]")
@@ -36,7 +38,7 @@ class MockFaultyIMU(MockIMU):
             raise ValueError("dropout_frames must be positive when provided")
 
         self.drop_probability = drop_probability
-        self.drop_range = drop_range
+        self.drop_range = (low, high)
         self.dropout_probability = dropout_probability
         self.dropout_frames = dropout_frames
         self.seed = seed
