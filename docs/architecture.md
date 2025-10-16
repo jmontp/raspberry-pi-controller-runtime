@@ -70,6 +70,50 @@ provider (derived values) retain their schema defaults until software layers
 populate them explicitly. The runtime orchestrator logs each feature/torque
 snapshot before applying the safety-clamped command to the actuator.
 
+## Profile configuration schema
+
+Runtime instances are declared in YAML (see `scripts/mock_hardware_config.yaml`).
+The top-level sections are `profile`, `input_signals`, `output_signals`,
+`hardware`, and `controllers`. Key structures are:
+
+### `input_signals`
+
+An ordered list of mappings describing each canonical feature exposed to the
+controller. Supported keys per entry:
+
+| key        | type    | required | default | description |
+|------------|---------|----------|---------|-------------|
+| `name`     | string  | yes      | –       | Canonical signal identifier (e.g., `knee_flexion_angle_ipsi_rad`). |
+| `hardware` | string  | no       | `null`  | Sensor alias from `hardware.sensors`; omit for derived/software signals. |
+| `required` | bool    | no       | `true`  | Marks whether the runtime must receive this signal each tick. Optional signals fall back to `default`. |
+| `default`  | number  | no       | `0.0`   | Initial value used when the signal is absent (for optional/derived features). |
+
+Setting `required: false` and providing a `default` allows profiles to declare
+features consumed by the torque model that are not produced by mock hardware
+during development while keeping the schema consistent with hardware builds.
+
+### `output_signals`
+
+Ordered list mapping controller outputs to actuator aliases. Each entry
+expects:
+
+- `name` (string, required) – canonical torque identifier.
+- `hardware` (string, required) – actuator alias from `hardware.actuators`.
+
+### `controllers`
+
+Controllers are keyed by name. Each entry declares:
+
+- `implementation` – import path to the controller class.
+- `joints` – ordered tuple of torque names emitted by the controller.
+- `config` – controller-specific parameters (e.g., PI gains, limits).
+- `torque_model` – mapping with `implementation` and `config` for the torque
+  generator (e.g., bundle path, subject mass, assistance fraction).
+
+These definitions align with the runtime validation logic in
+`rpc_runtime.config.profile` and ensure declarative profiles stay consistent
+across mock and hardware-backed deployments.
+
 ## Component Contracts
 
 ### DataWrangler interface
