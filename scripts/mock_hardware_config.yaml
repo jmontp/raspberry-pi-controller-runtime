@@ -1,0 +1,62 @@
+profile:
+  name: mock_runtime
+  controller: pi_mock
+
+input_signals:
+  - name: knee_flexion_angle_ipsi_rad
+    hardware: imu_mock
+  - name: knee_flexion_velocity_ipsi_rad_s
+    hardware: imu_mock
+  - name: ankle_dorsiflexion_angle_ipsi_rad
+    hardware: imu_mock
+  - name: ankle_dorsiflexion_velocity_ipsi_rad_s
+    hardware: imu_mock
+  - name: vertical_grf_ipsi_N
+    hardware: vertical_grf_mock
+    required: false
+
+output_signals:
+  - name: knee_flexion_moment_ipsi_Nm
+    hardware: actuator_mock
+  - name: ankle_dorsiflexion_moment_ipsi_Nm
+    hardware: actuator_mock
+
+hardware:
+  sensors:
+    imu_mock:
+      class: rpc_runtime.sensors.imu.mock.MockIMU
+      config:
+        loop: true
+    vertical_grf_mock:
+      class: rpc_runtime.sensors.grf.mock.MockVerticalGRF
+      config:
+        loop: true
+  actuators:
+    actuator_mock:
+      class: rpc_runtime.actuators.mock.MockActuator
+      config: {}
+
+controllers:
+  pi_mock:
+    implementation: rpc_runtime.controllers.pi_controller.PIController
+    joints:
+      - knee_flexion_moment_ipsi_Nm
+      - ankle_dorsiflexion_moment_ipsi_Nm
+    description: "Mock PI controller for runtime smoke testing."
+    config:
+      dt: 0.01
+      torque_scale: 0.1
+      torque_limit_nm: 10.0
+      gains:
+        kp:
+          knee_flexion_moment_ipsi_Nm: 0.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
+        ki:
+          knee_flexion_moment_ipsi_Nm: 0.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
+      config:
+        outputs:
+          knee_flexion_moment_ipsi_Nm: 0.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
