@@ -1,6 +1,6 @@
 # Raspberry Pi Controller Runtime
 
-`raspberry-pi-controller-runtime` consolidates our Raspberry Pi exoskeleton controller runtime: modular sensor abstractions, actuator interfaces powered by `osl`, torque model loaders, and orchestration utilities to run closed-loop control on embedded Linux.
+`raspberry-pi-controller-runtime`: Make it easy to swap between models, sensors, and actuators so we can evaluate different exoskeleton control stacks without rewriting the runtime each time.
 
 ## Repository goals
 - Provide consistent abstractions for IMUs, ground reaction force sensing, and future modalities.
