@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Iterable
 
 from .base import ActuatorError, BaseActuator, BaseActuatorConfig, TorqueCommand
 
@@ -33,19 +34,21 @@ class OSLLegConfig:
 class OSLActuator(BaseActuator):
     """Context manager around `opensourceleg.osl.OpenSourceLeg`."""
 
-    def __init__(self, config: OSLLegConfig):
+    def __init__(self, config: OSLLegConfig | Mapping[str, object]):
         """Instantiate the actuator wrapper.
 
         Args:
-            config: Controller frequency and joint definitions for the leg.
+            config: Controller frequency and joint definitions for the leg. A mapping
+                (deserialised from YAML) is accepted for convenience and converted into
+                :class:`OSLLegConfig`.
 
         Raises:
             RuntimeError: If the underlying `osl` module is unavailable.
         """
         if OpenSourceLeg is None:
-            raise RuntimeError(
-                "opensourceleg.osl.OpenSourceLeg import failed. Install osl before use."
-            )
+            raise RuntimeError("opensourceleg.osl.OpenSourceLeg import failed. Install osl before use.")
+        if isinstance(config, Mapping):
+            config = self._build_config_from_mapping(config)
         joint_names = tuple(joint.name for joint in config.joints)
         super().__init__(BaseActuatorConfig(joint_names=joint_names))
         self._leg_config = config
@@ -95,3 +98,27 @@ class OSLActuator(BaseActuator):
         faults = {name: state for name, state in status.items() if state is not None}
         if faults:
             raise ActuatorError(f"Detected actuator faults: {faults}")
+
+    @staticmethod
+    def _build_config_from_mapping(config: Mapping[str, object]) -> OSLLegConfig:
+        controller_hz = int(config.get("controller_hz", 500))
+        joints_raw = config.get("joints", ())
+        joints: list[OSLJoint] = []
+        if isinstance(joints_raw, Iterable):
+            for entry in joints_raw:
+                if not isinstance(entry, Mapping):
+                    raise TypeError("Each joint entry must be a mapping")
+                name = entry.get("name")
+                port = entry.get("port")
+                if name is None or port is None:
+                    raise ValueError("Each OSL joint mapping must provide 'name' and 'port'")
+                joints.append(
+                    OSLJoint(
+                        name=str(name),
+                        gear_ratio=float(entry.get("gear_ratio", 1.0)),
+                        port=str(port),
+                    )
+                )
+        if not joints:
+            raise ValueError("OSLLegConfig requires at least one joint definition")
+        return OSLLegConfig(controller_hz=controller_hz, joints=tuple(joints))

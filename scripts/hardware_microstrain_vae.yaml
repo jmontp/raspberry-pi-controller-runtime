@@ -1,0 +1,87 @@
+profile:
+  name: microstrain_osl_vae
+  controller: pi_vae
+
+input_signals:
+  - { name: hip_flexion_angle_ipsi_rad, hardware: imu_microstrain }
+  - { name: hip_flexion_velocity_ipsi_rad_s, hardware: imu_microstrain }
+  - { name: thigh_sagittal_angle_ipsi_rad, hardware: imu_microstrain }
+  - { name: thigh_sagittal_velocity_ipsi_rad_s, hardware: imu_microstrain }
+  - { name: hip_flexion_angle_contra_rad, hardware: imu_microstrain }
+  - { name: hip_flexion_velocity_contra_rad_s, hardware: imu_microstrain }
+  - { name: thigh_sagittal_angle_contra_rad, hardware: imu_microstrain }
+  - { name: thigh_sagittal_velocity_contra_rad_s, hardware: imu_microstrain }
+  - { name: knee_flexion_angle_ipsi_rad, hardware: imu_microstrain }
+  - { name: knee_flexion_velocity_ipsi_rad_s, hardware: imu_microstrain }
+  - { name: shank_sagittal_angle_ipsi_rad, hardware: imu_microstrain }
+  - { name: shank_sagittal_velocity_ipsi_rad_s, hardware: imu_microstrain }
+  - { name: knee_flexion_angle_contra_rad, hardware: imu_microstrain }
+  - { name: knee_flexion_velocity_contra_rad_s, hardware: imu_microstrain }
+  - { name: shank_sagittal_angle_contra_rad, hardware: imu_microstrain }
+  - { name: shank_sagittal_velocity_contra_rad_s, hardware: imu_microstrain }
+  - { name: ankle_dorsiflexion_angle_ipsi_rad, hardware: imu_microstrain }
+  - { name: ankle_dorsiflexion_velocity_ipsi_rad_s, hardware: imu_microstrain }
+  - { name: foot_sagittal_angle_ipsi_rad, hardware: imu_microstrain }
+  - { name: foot_sagittal_velocity_ipsi_rad_s, hardware: imu_microstrain }
+  - { name: ankle_dorsiflexion_angle_contra_rad, hardware: imu_microstrain }
+  - { name: ankle_dorsiflexion_velocity_contra_rad_s, hardware: imu_microstrain }
+  - { name: foot_sagittal_angle_contra_rad, hardware: imu_microstrain }
+  - { name: foot_sagittal_velocity_contra_rad_s, hardware: imu_microstrain }
+
+output_signals:
+  - name: knee_flexion_moment_ipsi_Nm
+    hardware: osl_leg
+  - name: ankle_dorsiflexion_moment_ipsi_Nm
+    hardware: osl_leg
+
+hardware:
+  sensors:
+    imu_microstrain:
+      class: rpc_runtime.sensors.imu.microstrain_3dm_gx5.Microstrain3DMGX5IMU
+      config:
+        calibration_samples: 400
+        calibration_interval_s: 0.002
+        port_map:
+          thigh_r: /dev/ttyIMU_thigh_r
+          shank_r: /dev/ttyIMU_shank_r
+          foot_r: /dev/ttyIMU_foot_r
+          thigh_l: /dev/ttyIMU_thigh_l
+          shank_l: /dev/ttyIMU_shank_l
+          foot_l: /dev/ttyIMU_foot_l
+  actuators:
+    osl_leg:
+      class: rpc_runtime.actuators.osl_actuator.OSLActuator
+      config:
+        controller_hz: 500
+        joints:
+          - { name: knee_flexion_moment_ipsi_Nm, gear_ratio: 9.0, port: /dev/ttyActPackRightKnee }
+          - { name: ankle_dorsiflexion_moment_ipsi_Nm, gear_ratio: 9.0, port: /dev/ttyActPackRightAnkle }
+
+controllers:
+  pi_vae:
+    implementation: rpc_runtime.controllers.pi_controller.PIController
+    joints:
+      - knee_flexion_moment_ipsi_Nm
+      - ankle_dorsiflexion_moment_ipsi_Nm
+    config:
+      dt: 0.002
+      torque_scale: 1.0
+      torque_limit_nm: 40.0
+      gains:
+        kp:
+          knee_flexion_moment_ipsi_Nm: 45.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 30.0
+        ki:
+          knee_flexion_moment_ipsi_Nm: 3.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 1.8
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.joblib.JoblibTorqueModel
+      config:
+        model_path: ../torque-modeling/torque_modeling/artifacts/kinematic_vae/T-20250925-194858_295c2d9533/model.joblib
+        scaler_path: ../torque-modeling/torque_modeling/artifacts/kinematic_vae/T-20250925-194858_295c2d9533/scaler.joblib
+        loader: torque_modeling.architectures.kinematic_vae.model.load_model
+        output_map:
+          knee_flexion_moment_ipsi_Nm: knee_flexion_moment_ipsi_Nm_kg
+          ankle_dorsiflexion_moment_ipsi_Nm: ankle_dorsiflexion_moment_ipsi_Nm_kg
+        subject_mass_kg: 74.0
+        assistance_fraction: 0.4

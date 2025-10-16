@@ -83,7 +83,12 @@ class RuntimeLoop:
         if self._artifacts is not None:
             self._artifacts.finalise(self._sensors)
 
-    def run(self, duration_s: float | None = None) -> Iterable[ControlInputs]:
+    def run(
+        self,
+        duration_s: float | None = None,
+        *,
+        tick_hook: Callable[[Mapping[str, float]], None] | None = None,
+    ) -> Iterable[ControlInputs]:
         """Drive the read→compute→actuate loop."""
         start = time.monotonic()
         scheduler = self._scheduler_factory(duration_s)
@@ -93,6 +98,7 @@ class RuntimeLoop:
                     if self._artifacts is not None:
                         self._artifacts.record_scheduler_tick()
                     features_view, meta, control_inputs = self._wrangler.get_sensor_data()
+                    feature_snapshot = dict(features_view.as_dict())
                     raw_command = self._controller.compute_torque(
                         features_view,
                         timestamp=meta.timestamp,
@@ -107,12 +113,18 @@ class RuntimeLoop:
                     timestamp = meta.timestamp
                     self._diagnostics.log_tick(
                         timestamp=float(timestamp),
-                        features=dict(features_view.as_dict()),
+                        features=feature_snapshot,
                         feature_packet=control_inputs,
                         torque_command_raw=raw_command,
                         torque_command_safe=safe_command,
                         scheduler=scheduler_snapshot,
                     )
+                    if tick_hook is not None:
+                        try:
+                            tick_hook(feature_snapshot)
+                        except Exception:  # pragma: no cover - defensive guard
+                            LOGGER.exception("Tick hook raised an exception; disabling hook")
+                            tick_hook = None
                     self._actuator.apply(safe_command)
                     self._actuator.fault_if_needed()
                     yield control_inputs

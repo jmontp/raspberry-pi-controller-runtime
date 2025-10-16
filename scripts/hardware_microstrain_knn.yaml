@@ -1,0 +1,70 @@
+profile:
+  name: microstrain_osl_knn
+  controller: pi_knn
+
+input_signals:
+  - name: hip_flexion_angle_ipsi_rad
+    hardware: imu_microstrain
+  - name: knee_flexion_angle_ipsi_rad
+    hardware: imu_microstrain
+  - name: ankle_dorsiflexion_angle_ipsi_rad
+    hardware: imu_microstrain
+
+output_signals:
+  - name: knee_flexion_moment_ipsi_Nm
+    hardware: osl_leg
+  - name: ankle_dorsiflexion_moment_ipsi_Nm
+    hardware: osl_leg
+
+hardware:
+  sensors:
+    imu_microstrain:
+      class: rpc_runtime.sensors.imu.microstrain_3dm_gx5.Microstrain3DMGX5IMU
+      config:
+        calibration_samples: 300
+        calibration_interval_s: 0.002
+        port_map:
+          thigh_r: /dev/ttyIMU_thigh_r
+          shank_r: /dev/ttyIMU_shank_r
+          foot_r: /dev/ttyIMU_foot_r
+  actuators:
+    osl_leg:
+      class: rpc_runtime.actuators.osl_actuator.OSLActuator
+      config:
+        controller_hz: 500
+        joints:
+          - name: knee_flexion_moment_ipsi_Nm
+            gear_ratio: 9.0
+            port: /dev/ttyActPackRightKnee
+          - name: ankle_dorsiflexion_moment_ipsi_Nm
+            gear_ratio: 9.0
+            port: /dev/ttyActPackRightAnkle
+
+controllers:
+  pi_knn:
+    implementation: rpc_runtime.controllers.pi_controller.PIController
+    joints:
+      - knee_flexion_moment_ipsi_Nm
+      - ankle_dorsiflexion_moment_ipsi_Nm
+    config:
+      dt: 0.002
+      torque_scale: 1.0
+      torque_limit_nm: 35.0
+      gains:
+        kp:
+          knee_flexion_moment_ipsi_Nm: 40.0
+          ankle_dorsiflexion_moment_ipsi_Nm: 25.0
+        ki:
+          knee_flexion_moment_ipsi_Nm: 2.5
+          ankle_dorsiflexion_moment_ipsi_Nm: 1.5
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.joblib.JoblibTorqueModel
+      config:
+        model_path: ../torque-modeling/torque_modeling/artifacts/sklearn_ensemble/T-20250923-153615_7e88448591/model.joblib
+        scaler_path: ../torque-modeling/torque_modeling/artifacts/sklearn_ensemble/T-20250923-153615_7e88448591/scaler.joblib
+        loader: torque_modeling.architectures.knn.model.load_model
+        output_map:
+          knee_flexion_moment_ipsi_Nm: knee_flexion_moment_ipsi_Nm_kg
+          ankle_dorsiflexion_moment_ipsi_Nm: ankle_dorsiflexion_moment_ipsi_Nm_kg
+        subject_mass_kg: 75.0
+        assistance_fraction: 0.35

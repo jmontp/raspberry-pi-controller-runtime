@@ -6,7 +6,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 # Ensure local sources are importable without installation
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +21,21 @@ LOGGER = logging.getLogger("rpc_runtime.scripts.run")
 
 DEFAULT_PROFILE_PATH = Path(__file__).with_name("mock_hardware_config.yaml")
 DEFAULT_DIAGNOSTICS_ROOT = DEFAULT_PROFILE_PATH.with_name("diagnostics")
+
+
+class _RTPlotStreamer:
+    """Lightweight adapter that forwards feature snapshots to better-rtplot."""
+
+    def __init__(self, client_module, signal_names: list[str]) -> None:
+        self._client = client_module
+        self._names = signal_names
+
+    def stream(self, features: Mapping[str, float]) -> None:
+        import numpy as np  # local import to avoid dependency when unused
+
+        values = [float(features.get(name, 0.0)) for name in self._names]
+        payload = np.asarray(values, dtype=np.float32).reshape(1, -1)
+        self._client.send_array(payload)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -60,6 +75,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Enable debug logging",
     )
+    parser.add_argument(
+        "--rtplot",
+        action="store_true",
+        help="Stream live feature traces to better-rtplot; requires the plotting server to be running.",
+    )
+    parser.add_argument(
+        "--rtplot-host",
+        type=str,
+        default="local",
+        help="Target plot host for rtplot (e.g. 'local', 'tv', '192.168.1.42:5555').",
+    )
     return parser.parse_args(argv)
 
 
@@ -78,6 +104,38 @@ def _normalise_diagnostics_root(raw: str | None) -> Path | None:
     return Path(value).expanduser().resolve()
 
 
+def _initialise_rtplot(enabled: bool, host: str, signal_routes) -> _RTPlotStreamer | None:
+    if not enabled:
+        return None
+    try:
+        from rtplot import client as rt_client  # type: ignore[import]
+    except Exception as exc:  # pragma: no cover - optional dependency
+        LOGGER.error("Failed to initialise rtplot client (%s); disabling live plotting", exc)
+        return None
+
+    signal_names = [route.name for route in signal_routes if getattr(route, "name", None)]
+    if not signal_names:
+        LOGGER.warning("No signal routes available for rtplot; skipping live plotting")
+        return None
+
+    host_lower = host.strip().lower()
+    try:
+        if host_lower in {"", "local"}:
+            rt_client.local_plot()
+        elif host_lower == "tv":
+            rt_client.plot_to_neurobionics_tv()
+        else:
+            rt_client.configure_ip(host)
+    except Exception as exc:  # pragma: no cover - network setup
+        LOGGER.error("Unable to configure rtplot connection (%s); disabling live plotting", exc)
+        return None
+
+    layout = [signal_names]
+    rt_client.initialize_plots(layout)
+    LOGGER.info("Streaming %d features via rtplot (%s)", len(signal_names), host_lower or "local")
+    return _RTPlotStreamer(rt_client, signal_names)
+
+
 def run_loop(
     *,
     profile_path: Path,
@@ -85,6 +143,8 @@ def run_loop(
     duration_s: float | None,
     diagnostics_root: Path | None,
     profile_name_override: str | None,
+    rtplot: bool,
+    rtplot_host: str,
 ) -> Path | None:
     profile = load_runtime_profile(profile_path)
     components = build_runtime_components(profile)
@@ -113,6 +173,8 @@ def run_loop(
         artifacts=artifacts if artifacts.diagnostics_enabled() else None,
     )
 
+    plotter = _initialise_rtplot(rtplot, rtplot_host, profile.signal_routes)
+
     LOGGER.info("Starting runtime loop at %.1f Hz (profile=%s)", frequency_hz, profile.name)
     if artifacts.diagnostics_enabled():
         LOGGER.info("Diagnostics directory: %s", artifacts.run_dir)
@@ -121,7 +183,7 @@ def run_loop(
 
     try:
         with loop:
-            for _ in loop.run(duration_s=duration_s):
+            for _ in loop.run(duration_s=duration_s, tick_hook=(plotter.stream if plotter else None)):
                 pass
     except KeyboardInterrupt:
         LOGGER.info("Received keyboard interrupt, stopping runtime loop")
@@ -145,6 +207,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             duration_s=args.duration,
             diagnostics_root=diagnostics_root,
             profile_name_override=args.profile_name,
+            rtplot=args.rtplot,
+            rtplot_host=args.rtplot_host,
         )
     except FileNotFoundError as exc:
         LOGGER.error("Profile file not found: %s", exc)

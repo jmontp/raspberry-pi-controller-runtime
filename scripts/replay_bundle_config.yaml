@@ -70,7 +70,7 @@ hardware:
         tasks:
           - decline_walking
         max_samples: 5000
-        dt: 0.01
+        dt: 0.001
     grf_replay:
       class: rpc_runtime.sensors.grf.replay.ReplayVerticalGRF
       config:
@@ -79,7 +79,7 @@ hardware:
         tasks:
           - decline_walking
         max_samples: 5000
-        dt: 0.01
+        dt: 0.001
         body_mass_kg: 75.0
         config_override:
           channel_names:
@@ -97,7 +97,7 @@ controllers:
       - knee_flexion_moment_ipsi_Nm
       - ankle_dorsiflexion_moment_ipsi_Nm
     config:
-      dt: 0.01
+      dt: 0.001
       torque_scale: 1.0
       torque_limit_nm: 30.0
       gains:
