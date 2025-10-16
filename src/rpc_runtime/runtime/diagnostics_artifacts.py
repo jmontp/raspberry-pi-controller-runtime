@@ -239,6 +239,7 @@ class DiagnosticsArtifacts:
         loop_stats = self._write_scheduler_metrics()
         sensor_summaries = self._write_sensor_metrics(sensors, loop_stats)
         self._write_report(loop_stats, sensor_summaries)
+        self._render_data_plot()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -575,6 +576,157 @@ class DiagnosticsArtifacts:
             lines.append("")
 
         report_path.write_text("\n".join(lines), encoding="utf-8")
+
+    def _render_data_plot(self) -> None:
+        """Render a multi-panel plot of recorded inputs and outputs."""
+        if not self.enabled:
+            return
+        data_path = self.run_dir / "data.csv"
+        if not data_path.exists():
+            return
+        try:
+            import pandas as pd
+        except Exception as exc:  # pragma: no cover - optional dependency
+            LOGGER.warning("Pandas unavailable (%s); skipping data plot", exc)
+            return
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except Exception as exc:  # pragma: no cover - optional dependency
+            LOGGER.warning("Matplotlib unavailable (%s); skipping data plot", exc)
+            return
+
+        try:
+            df = pd.read_csv(data_path)
+        except Exception as exc:  # pragma: no cover - best effort
+            LOGGER.warning("Failed to load diagnostics CSV for plotting: %s", exc)
+            return
+        if df.empty:
+            return
+
+        if "timestamp" in df.columns:
+            time_series = pd.to_numeric(df["timestamp"], errors="coerce")
+            time_label = "Time (s)"
+        else:
+            time_series = pd.Series(range(len(df)), dtype=float)
+            time_label = "Sample"
+        time_series = time_series.fillna(method="ffill").fillna(method="bfill")
+        time_values = time_series.to_numpy()
+
+        input_color = "#1f77b4"
+        output_color = "#d62728"
+
+        angle_map = [
+            ("imu_joint_angle_0", "hip_flexion_angle_ipsi_rad", "rad"),
+            ("imu_joint_angle_1", "knee_flexion_angle_ipsi_rad", "rad"),
+            ("imu_joint_angle_2", "ankle_dorsiflexion_angle_ipsi_rad", "rad"),
+            ("imu_joint_angle_3", "hip_flexion_angle_contra_rad", "rad"),
+            ("imu_joint_angle_4", "knee_flexion_angle_contra_rad", "rad"),
+            ("imu_joint_angle_5", "ankle_dorsiflexion_angle_contra_rad", "rad"),
+        ]
+        velocity_map = [
+            ("imu_joint_vel_0", "hip_flexion_velocity_ipsi_rad_s", "rad/s"),
+            ("imu_joint_vel_1", "knee_flexion_velocity_ipsi_rad_s", "rad/s"),
+            ("imu_joint_vel_2", "ankle_dorsiflexion_velocity_ipsi_rad_s", "rad/s"),
+            ("imu_joint_vel_3", "hip_flexion_velocity_contra_rad_s", "rad/s"),
+            ("imu_joint_vel_4", "knee_flexion_velocity_contra_rad_s", "rad/s"),
+            ("imu_joint_vel_5", "ankle_dorsiflexion_velocity_contra_rad_s", "rad/s"),
+        ]
+        segment_angle_map = [
+            ("seg_angle_0", "trunk_sagittal_angle_rad", "rad"),
+            ("seg_angle_1", "thigh_sagittal_angle_ipsi_rad", "rad"),
+            ("seg_angle_2", "shank_sagittal_angle_ipsi_rad", "rad"),
+            ("seg_angle_3", "foot_sagittal_angle_ipsi_rad", "rad"),
+            ("seg_angle_4", "thigh_sagittal_angle_contra_rad", "rad"),
+            ("seg_angle_5", "shank_sagittal_angle_contra_rad", "rad"),
+            ("seg_angle_6", "foot_sagittal_angle_contra_rad", "rad"),
+        ]
+        segment_velocity_map = [
+            ("seg_vel_0", "trunk_sagittal_velocity_rad_s", "rad/s"),
+            ("seg_vel_1", "thigh_sagittal_velocity_ipsi_rad_s", "rad/s"),
+            ("seg_vel_2", "shank_sagittal_velocity_ipsi_rad_s", "rad/s"),
+            ("seg_vel_3", "foot_sagittal_velocity_ipsi_rad_s", "rad/s"),
+            ("seg_vel_4", "thigh_sagittal_velocity_contra_rad_s", "rad/s"),
+            ("seg_vel_5", "shank_sagittal_velocity_contra_rad_s", "rad/s"),
+            ("seg_vel_6", "foot_sagittal_velocity_contra_rad_s", "rad/s"),
+        ]
+        grf_map = [
+            ("grf_force_0", "vertical_grf_ipsi_N", "N"),
+            ("grf_force_1", "vertical_grf_contra_N", "N"),
+        ]
+
+        entries: list[tuple[str, str, str, str, pd.Series]] = []
+
+        def _add_signals(mapping: list[tuple[str, str, str]], color: str) -> None:
+            for column, name, unit in mapping:
+                if column in df.columns:
+                    series = pd.to_numeric(df[column], errors="coerce")
+                    entries.append((column, name, unit, color, series))
+
+        _add_signals(angle_map, input_color)
+        _add_signals(velocity_map, input_color)
+        _add_signals(segment_angle_map, input_color)
+        _add_signals(segment_velocity_map, input_color)
+        _add_signals(grf_map, input_color)
+
+        for column in sorted(c for c in df.columns if c.startswith("torque_safe_")):
+            name = column.removeprefix("torque_safe_")
+            unit = "Nm/kg" if name.endswith("_Nm_kg") else "Nm"
+            series = pd.to_numeric(df[column], errors="coerce")
+            entries.append((column, name, unit, output_color, series))
+
+        if not entries:
+            return
+
+        unit_ranges: dict[str, tuple[float, float]] = {}
+        for _, _, unit, _, series in entries:
+            valid = series.dropna()
+            if valid.empty:
+                continue
+            try:
+                vmin = float(valid.min())
+                vmax = float(valid.max())
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(vmin) or not math.isfinite(vmax):
+                continue
+            current = unit_ranges.get(unit)
+            if current:
+                vmin = min(vmin, current[0])
+                vmax = max(vmax, current[1])
+            unit_ranges[unit] = (vmin, vmax)
+
+        unit_limits: dict[str, tuple[float, float]] = {}
+        for unit, (vmin, vmax) in unit_ranges.items():
+            if math.isclose(vmin, vmax):
+                span = abs(vmin) if abs(vmin) > 1e-6 else 1.0
+                pad = span * 0.1 if span else 0.1
+                vmin -= pad
+                vmax += pad
+            unit_limits[unit] = (vmin, vmax)
+
+        fig_height = max(2.0, 1.5 * len(entries))
+        fig, axes = plt.subplots(len(entries), 1, sharex=True, figsize=(12, fig_height))
+        if len(entries) == 1:
+            axes = [axes]  # type: ignore[list-item]
+        for ax, (_, name, unit, color, series) in zip(axes, entries):
+            ax.plot(time_values, series, color=color, linewidth=1.2)
+            ax.set_ylabel(f"{name} [{unit}]")
+            limits = unit_limits.get(unit)
+            if limits:
+                ax.set_ylim(*limits)
+            ax.grid(True, linestyle="--", alpha=0.3)
+        axes[-1].set_xlabel(time_label)
+        fig.tight_layout()
+        output_path = data_path.with_suffix(".png")
+        try:
+            fig.savefig(output_path, dpi=150, format="png")
+        except Exception as exc:  # pragma: no cover - runtime guard
+            LOGGER.warning("Failed to render diagnostics data plot: %s", exc)
+        finally:
+            plt.close(fig)
 
     def _render_availability_plot(
         self,
