@@ -45,6 +45,10 @@ def _compute_histogram(samples: Sequence[float], bins: int) -> tuple[tuple[float
 
 def _write_histogram_csv(path: Path, samples: Sequence[float], bins: int) -> None:
     edges, counts = _compute_histogram(samples, bins)
+    _write_histogram_counts(path, edges, counts)
+
+
+def _write_histogram_counts(path: Path, edges: Sequence[float], counts: Sequence[int]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         handle.write("bin_start,bin_end,count\n")
@@ -189,11 +193,16 @@ class DiagnosticsArtifacts:
             diagnostics = getattr(sensor, "diagnostics", None)
             if diagnostics is None:
                 continue
-            periods = getattr(diagnostics, "recent_sample_periods", ()) or ()
             target = self.sensors_dir / alias
             target.mkdir(parents=True, exist_ok=True)
+            periods = getattr(diagnostics, "recent_sample_periods", ()) or ()
+            rates = getattr(diagnostics, "recent_sample_rates", ()) or ()
             _write_series(target / "sample_periods.csv", periods, header="seconds")
-            _write_histogram_csv(target / "sample_period_histogram.csv", periods, bins=10)
+            period_edges, period_counts = sensor.sample_period_histogram(bins=10)
+            _write_histogram_counts(target / "sample_period_histogram.csv", period_edges, period_counts)
+            _write_series(target / "sample_rates_hz.csv", rates, header="hz")
+            rate_edges, rate_counts = sensor.sample_rate_histogram(bins=10)
+            _write_histogram_counts(target / "sample_rate_histogram.csv", rate_edges, rate_counts)
             summary_lines = [
                 f"total_samples={getattr(diagnostics, 'total_samples', 0)}",
                 f"stale_samples={getattr(diagnostics, 'stale_samples', 0)}",

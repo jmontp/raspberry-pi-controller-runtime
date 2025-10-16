@@ -108,6 +108,7 @@ def run_loop(
         controller=components.controller,
         signal_routes=profile.signal_routes,
         diagnostics=artifacts.sink,
+        artifacts=artifacts if artifacts.diagnostics_enabled() else None,
     )
 
     LOGGER.info("Starting runtime loop at %.1f Hz (profile=%s)", frequency_hz, profile.name)
@@ -119,12 +120,11 @@ def run_loop(
     try:
         with loop:
             for _ in loop.run(duration_s=duration_s):
-                artifacts.record_scheduler_tick()
+                pass
     except KeyboardInterrupt:
         LOGGER.info("Received keyboard interrupt, stopping runtime loop")
     finally:
         LOGGER.info("Runtime loop finished")
-        artifacts.finalise(components.sensors)
 
     return artifacts.run_dir if artifacts.diagnostics_enabled() else None
 

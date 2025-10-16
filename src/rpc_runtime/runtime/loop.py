@@ -11,6 +11,7 @@ from ..controllers.pi_controller import PIController
 from ..sensors.base import BaseSensor
 from ..sensors.combinators import ControlInputs
 from .diagnostics import DiagnosticsSink, NoOpDiagnosticsSink
+from .diagnostics_artifacts import DiagnosticsArtifacts
 from .safety import SafetyConfig, SafetyManager
 from .scheduler import BaseScheduler, SimpleScheduler
 from .wrangler import DataWrangler, InputSchema
@@ -41,6 +42,7 @@ class RuntimeLoop:
         input_schema: InputSchema | None = None,
         scheduler_factory: Callable[[float | None], BaseScheduler] | None = None,
         diagnostics: DiagnosticsSink | None = None,
+        artifacts: DiagnosticsArtifacts | None = None,
     ) -> None:
         """Initialise the runtime loop with hardware interfaces and scheduling."""
         self._config = config
@@ -50,6 +52,8 @@ class RuntimeLoop:
             lambda duration: SimpleScheduler(config.frequency_hz, duration)
         )
         self._diagnostics: DiagnosticsSink = diagnostics or NoOpDiagnosticsSink()
+        self._artifacts = artifacts
+        self._sensors: dict[str, BaseSensor] = dict(sensors)
 
         schema = input_schema or getattr(controller, "_input_schema", None)
         if schema is None:
@@ -58,7 +62,7 @@ class RuntimeLoop:
         self._wrangler = DataWrangler(
             required_inputs=schema,
             signal_routes=signal_routes,
-            sensors=sensors,
+            sensors=self._sensors,
             diagnostics_sink=self._diagnostics,
         )
         limits = getattr(getattr(self._actuator, "config", None), "torque_limits_nm", None)
@@ -76,6 +80,8 @@ class RuntimeLoop:
         self._actuator.__exit__(exc_type, exc, tb)
         self._wrangler.__exit__(exc_type, exc, tb)
         self._diagnostics.flush()
+        if self._artifacts is not None:
+            self._artifacts.finalise(self._sensors)
 
     def run(self, duration_s: float | None = None) -> Iterable[ControlInputs]:
         """Drive the read→compute→actuate loop."""
@@ -84,6 +90,8 @@ class RuntimeLoop:
         with scheduler:
             try:
                 for tick_index, _ in enumerate(scheduler.ticks()):
+                    if self._artifacts is not None:
+                        self._artifacts.record_scheduler_tick()
                     features_view, meta, control_inputs = self._wrangler.get_sensor_data()
                     raw_command = self._controller.compute_torque(
                         features_view,

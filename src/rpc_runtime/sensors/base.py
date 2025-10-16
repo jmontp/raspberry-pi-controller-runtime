@@ -4,12 +4,36 @@ from __future__ import annotations
 
 import abc
 import logging
+import math
 import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Callable, Deque, Iterable
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _compute_histogram(samples: Iterable[float], bins: int) -> tuple[tuple[float, ...], tuple[int, ...]]:
+    values = [float(s) for s in samples if not math.isnan(float(s))]
+    if not values:
+        return (), ()
+    minimum = min(values)
+    maximum = max(values)
+    if math.isclose(minimum, maximum):
+        return (minimum, maximum), (len(values),)
+    bin_count = max(1, min(bins, len(values)))
+    span = maximum - minimum
+    width = span / bin_count if span else 1.0
+    edges = [minimum + i * width for i in range(bin_count)]
+    edges.append(maximum)
+    counts = [0 for _ in range(bin_count)]
+    for value in values:
+        if value >= maximum:
+            index = bin_count - 1
+        else:
+            index = int((value - minimum) / width)
+        counts[index] += 1
+    return tuple(edges), tuple(counts)
 
 
 @dataclass(slots=True)
@@ -27,6 +51,7 @@ class SensorDiagnostics:
     max_stale_samples: int = 0
     max_stale_time_s: float = 0.0
     recent_sample_periods: tuple[float, ...] = ()
+    recent_sample_rates: tuple[float, ...] = ()
 
 
 @dataclass(slots=True)
@@ -109,7 +134,19 @@ class BaseSensor(abc.ABC):
             self._diagnostics.hz_max = None
             self._diagnostics.hz_mean = None
         self._diagnostics.recent_sample_periods = tuple(self._history)
+        self._diagnostics.recent_sample_rates = tuple(
+            (1.0 / dt) if dt > 0 else math.inf for dt in self._history
+        )
         return self._diagnostics
+
+    def sample_period_histogram(self, bins: int = 10) -> tuple[tuple[float, ...], tuple[int, ...]]:
+        """Return histogram bins/counts for recent sample periods."""
+        return _compute_histogram(self._history, bins)
+
+    def sample_rate_histogram(self, bins: int = 10) -> tuple[tuple[float, ...], tuple[int, ...]]:
+        """Return histogram bins/counts for recent sample rates (Hz)."""
+        rates = (1.0 / dt for dt in self._history if dt > 0)
+        return _compute_histogram(rates, bins)
 
     @property
     def config(self) -> BaseSensorConfig:
