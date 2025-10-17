@@ -106,7 +106,7 @@ Controllers are keyed by name. Each entry declares:
 
 - `implementation` – import path to the controller class.
 - `joints` – ordered tuple of torque names emitted by the controller.
-- `config` – controller-specific parameters (e.g., PI gains, limits).
+- `config` – controller-specific parameters (e.g., torque scale, limits).
 - `torque_model` – mapping with `implementation` and `config` for the torque
   generator (e.g., bundle path, subject mass, assistance fraction).
 
@@ -505,11 +505,6 @@ controllers:
       dt: 0.002
       torque_scale: 1.0
       torque_limit_nm: 60.0
-      velocity_filter_alpha: 0.1
-      torque_filter_alpha: 0.05
-      gains:
-        kp: { hip_flexion_moment_ipsi_Nm: 14.0, knee_flexion_moment_ipsi_Nm: 18.0 }
-        ki: { hip_flexion_moment_ipsi_Nm: 1.0, knee_flexion_moment_ipsi_Nm: 1.2 }
     torque_model:
       implementation: rpc_runtime.controllers.torque_models.torchscript.TorchScriptTorqueModel
       config:

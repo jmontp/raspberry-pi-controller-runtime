@@ -5,11 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rpc_runtime.actuators.osl_actuator import OSLActuator, OSLJoint, OSLLegConfig
-from rpc_runtime.controllers.pi_controller import (
-    PIController,
-    PIControllerConfig,
-    PIControllerGains,
-)
+from rpc_runtime.controllers.pi_controller import PIController, PIControllerConfig
 from rpc_runtime.controllers.torque_models.onnx_runtime import ONNXTorqueModel
 from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.sensors.grf.fsr import BluetoothFSR, BluetoothFSRConfig
@@ -27,10 +23,6 @@ def main() -> None:
         torque_scale=0.1,
         torque_limit_nm=25,
         joints=("knee", "ankle"),
-    )
-    gains = PIControllerGains(
-        kp={"knee": 120, "ankle": 80},
-        ki={"knee": 5, "ankle": 3},
     )
     torque_model = ONNXTorqueModel(bundle)
     imu = Microstrain3DMGX5IMU(
@@ -53,7 +45,7 @@ def main() -> None:
         RuntimeLoopConfig(frequency_hz=500),
         imu=imu,
         actuator=actuator,
-        controller=PIController(config, gains, torque_model),
+        controller=PIController(config, torque_model),
         vertical_grf=fsr,
     )
 

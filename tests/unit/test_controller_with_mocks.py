@@ -4,11 +4,7 @@ import pytest
 
 from rpc_runtime.actuators.mock import MockActuator
 from rpc_runtime.config.models import SignalRoute
-from rpc_runtime.controllers.pi_controller import (
-    PIController,
-    PIControllerConfig,
-    PIControllerGains,
-)
+from rpc_runtime.controllers.pi_controller import PIController, PIControllerConfig
 from rpc_runtime.controllers.torque_models.mock import MockTorqueModel
 from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.runtime.wrangler import InputSchema, SchemaSignal
@@ -42,10 +38,6 @@ def test_controller_with_mock_devices() -> None:
         torque_limit_nm=10.0,
         joints=(KNEE_TORQUE, ANKLE_TORQUE),
     )
-    gains = PIControllerGains(
-        kp={KNEE_TORQUE: 0.0, ANKLE_TORQUE: 0.0},
-        ki={KNEE_TORQUE: 0.0, ANKLE_TORQUE: 0.0},
-    )
     # Provide a schema so the runtime uses the DataWrangler path
     schema = InputSchema(
         name="pi_inputs",
@@ -59,7 +51,6 @@ def test_controller_with_mock_devices() -> None:
     )
     controller = PIController(
         config=config,
-        gains=gains,
         torque_model=torque_model,
         input_schema=schema,
     )

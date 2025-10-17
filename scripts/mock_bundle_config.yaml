@@ -75,18 +75,11 @@ controllers:
     joints:
       - knee_flexion_moment_ipsi_Nm
       - ankle_dorsiflexion_moment_ipsi_Nm
-    description: "PI controller using bundle-backed torque model for mock hardware."
+    description: "Feed-forward controller using bundle-backed torque model for mock hardware."
     config:
       dt: 0.01
       torque_scale: 1.0
       torque_limit_nm: 30.0
-      gains:
-        kp:
-          knee_flexion_moment_ipsi_Nm: 8.0
-          ankle_dorsiflexion_moment_ipsi_Nm: 6.5
-        ki:
-          knee_flexion_moment_ipsi_Nm: 0.2
-          ankle_dorsiflexion_moment_ipsi_Nm: 0.15
     torque_model:
       implementation: rpc_runtime.controllers.torque_models.bundle.BundleTorqueModel
       config:

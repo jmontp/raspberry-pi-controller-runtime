@@ -48,13 +48,6 @@ controllers:
       dt: 0.01
       torque_scale: 0.1
       torque_limit_nm: 15.0
-      gains:
-        kp:
-          knee_flexion_moment_ipsi_Nm: 0.0
-          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
-        ki:
-          knee_flexion_moment_ipsi_Nm: 0.0
-          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
     torque_model:
       implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
       config:

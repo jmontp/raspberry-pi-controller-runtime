@@ -94,18 +94,11 @@ controllers:
   pi_mock:
     implementation: rpc_runtime.controllers.pi_controller.PIController
     joints: ["knee_flexion_moment_ipsi_Nm", "ankle_dorsiflexion_moment_ipsi_Nm"]
-    description: "Mock PI controller bundle for development and testing."
+    description: "Mock feed-forward controller bundle for development and testing."
     config:
       dt: 0.01
       torque_scale: 0.1
       torque_limit_nm: 10.0
-      gains:
-        kp:
-          knee_flexion_moment_ipsi_Nm: 0.0
-          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
-        ki:
-          knee_flexion_moment_ipsi_Nm: 0.0
-          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
     torque_model:
       implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
       config:

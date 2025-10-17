@@ -63,18 +63,11 @@ controllers:
     joints:
       - knee_flexion_moment_ipsi_Nm
       - ankle_dorsiflexion_moment_ipsi_Nm
-    description: "PI controller bound to faulty mock sensors for diagnostics testing."
+    description: "Feed-forward controller bound to faulty mock sensors for diagnostics testing."
     config:
       dt: 0.01
       torque_scale: 0.1
       torque_limit_nm: 10.0
-      gains:
-        kp:
-          knee_flexion_moment_ipsi_Nm: 0.0
-          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
-        ki:
-          knee_flexion_moment_ipsi_Nm: 0.0
-          ankle_dorsiflexion_moment_ipsi_Nm: 0.0
     torque_model:
       implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
       config:

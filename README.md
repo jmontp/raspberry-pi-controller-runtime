@@ -4,7 +4,7 @@
 
 ## Repository goals
 - Provide consistent abstractions for IMUs, ground reaction force sensing, and future modalities.
-- Offer a reusable PI controller skeleton derived from `energy_shaping_ML/pi_code/jose_pi_controller.py` with dependency injection for sensors/actuators.
+- Offer a reusable feed-forward controller skeleton derived from `energy_shaping_ML/pi_code/jose_pi_controller.py` with dependency injection for sensors/actuators.
 - Standardise torque model packaging per `torque-modeling/docs/raspberry_pi.md`.
 - Ship deployment scripts, documentation, and CI guardrails for rapid iteration.
 

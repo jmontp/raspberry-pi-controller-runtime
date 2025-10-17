@@ -50,13 +50,6 @@ controllers:
       dt: 0.002
       torque_scale: 1.0
       torque_limit_nm: 35.0
-      gains:
-        kp:
-          knee_flexion_moment_ipsi_Nm: 40.0
-          ankle_dorsiflexion_moment_ipsi_Nm: 25.0
-        ki:
-          knee_flexion_moment_ipsi_Nm: 2.5
-          ankle_dorsiflexion_moment_ipsi_Nm: 1.5
     torque_model:
       implementation: rpc_runtime.controllers.torque_models.joblib.JoblibTorqueModel
       config:

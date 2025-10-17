@@ -1,22 +1,14 @@
-"""PI controller skeleton derived from `jose_pi_controller.py`."""
+"""Feed-forward torque controller built around configurable torque models."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Mapping
+from typing import Mapping
 
 from rpc_runtime.runtime.wrangler import InputSchema
 
 from ..actuators.base import TorqueCommand
 from .torque_models.base import TorqueModel
-
-
-@dataclass(slots=True)
-class PIControllerGains:
-    """Per-joint proportional and integral gains."""
-
-    kp: Dict[str, float]
-    ki: Dict[str, float]
 
 
 @dataclass(slots=True)
@@ -27,73 +19,21 @@ class PIControllerConfig:
     torque_scale: float
     torque_limit_nm: float
     joints: tuple[str, ...]
-    velocity_filter_alpha: float = 0.1
-    torque_filter_alpha: float = 0.1
-
-
-class LowPassFilter:
-    """Single-pole low-pass filter preserving previous state between updates."""
-
-    def __init__(self, alpha: float):
-        """Create a new filter.
-
-        Args:
-            alpha: Weight applied to the new sample (0..1).
-        """
-        self._alpha = alpha
-        self._state: float | None = None
-
-    def reset(self) -> None:
-        """Clear the filter state."""
-        self._state = None
-
-    def update(self, value: float) -> float:
-        """Blend a new sample with the smoothed history.
-
-        Args:
-            value: New scalar measurement.
-
-        Returns:
-            float: The filtered output.
-        """
-        if self._state is None:
-            self._state = value
-        else:
-            self._state = self._alpha * value + (1.0 - self._alpha) * self._state
-        return self._state
 
 
 class PIController:
-    """Composable PI controller with torque model feedforward."""
-
-    # Canonical mappings from torque outputs to sensor features.
-    TORQUE_TO_ANGLE = {
-        "knee_flexion_moment_ipsi_Nm": "knee_flexion_angle_ipsi_rad",
-        "ankle_dorsiflexion_moment_ipsi_Nm": "ankle_dorsiflexion_angle_ipsi_rad",
-        # Legacy joint names
-        "knee": "knee_flexion_angle_ipsi_rad",
-        "ankle": "ankle_dorsiflexion_angle_ipsi_rad",
-    }
-    TORQUE_TO_DESIRED_ANGLE = {
-        "knee_flexion_moment_ipsi_Nm": "knee_flexion_angle_desired_ipsi_rad",
-        "ankle_dorsiflexion_moment_ipsi_Nm": "ankle_dorsiflexion_angle_desired_ipsi_rad",
-        # Legacy joint names
-        "knee": "knee_flexion_angle_desired_ipsi_rad",
-        "ankle": "ankle_dorsiflexion_angle_desired_ipsi_rad",
-    }
+    """Feed-forward controller that scales torque-model outputs."""
 
     def __init__(
         self,
         config: PIControllerConfig,
-        gains: PIControllerGains,
         torque_model: TorqueModel,
         input_schema: InputSchema | None = None,
     ) -> None:
-        """Initialise controller state and allocate per-joint filters.
+        """Initialise controller state.
 
         Args:
             config: Control loop timing, limits, and joint ordering.
-            gains: Per-joint PI gains.
             torque_model: Feed-forward torque provider.
             input_schema: Optional input schema describing canonical controller
                 features. When provided, the runtime constructs a
@@ -102,19 +42,11 @@ class PIController:
         """
         self._config = config
         self._torque_model = torque_model
-        self._kp = gains.kp
-        self._ki = gains.ki
         self._input_schema = input_schema
-        self._integral_error = dict.fromkeys(config.joints, 0.0)
-        self._torque_filters = {
-            joint: LowPassFilter(config.torque_filter_alpha) for joint in config.joints
-        }
 
     def reset(self) -> None:
-        """Zero integrator and filter state for all joints."""
-        for joint in self._config.joints:
-            self._integral_error[joint] = 0.0
-            self._torque_filters[joint].reset()
+        """Reset any internal state (no-op for feed-forward controller)."""
+        return None
 
     def compute_torque(self, features: Mapping[str, float], *, timestamp: float) -> TorqueCommand:
         """Compute joint torques from canonical features.
@@ -133,30 +65,15 @@ class PIController:
         else:
             feature_map = dict(features)
         torque_ff = self._torque_model.run(dict(feature_map))
-        torques: Dict[str, float] = {}
+        torques: dict[str, float] = {}
+        limit = float(self._config.torque_limit_nm)
+        apply_limit = limit > 0
         for joint in self._config.joints:
-            angle_key = self.TORQUE_TO_ANGLE.get(joint)
-            raw_meas = feature_map.get(angle_key) if angle_key else feature_map.get(joint)
-            meas = float(raw_meas) if raw_meas is not None else 0.0
-
-            desired_key = self.TORQUE_TO_DESIRED_ANGLE.get(joint)
-            ref_value = feature_map.get(desired_key) if desired_key else None
-            if ref_value is None and angle_key:
-                fallback_desired = f"{angle_key}_desired"
-                ref_value = feature_map.get(fallback_desired)
-            if ref_value is None:
-                ref = meas
-            else:
-                ref = float(ref_value)
-            error = ref - meas
-            integral = self._integral_error[joint] + error * self._config.dt
-            self._integral_error[joint] = integral
-            p = self._kp.get(joint, 0.0) * error
-            i = self._ki.get(joint, 0.0) * integral
-            feedforward = torque_ff.get(joint, 0.0)
-            torque = (p + i + feedforward) * self._config.torque_scale
-            torque = max(min(torque, self._config.torque_limit_nm), -self._config.torque_limit_nm)
-            torques[joint] = self._torque_filters[joint].update(torque)
+            feedforward = float(torque_ff.get(joint, 0.0))
+            torque = feedforward * self._config.torque_scale
+            if apply_limit:
+                torque = max(min(torque, limit), -limit)
+            torques[joint] = torque
         return TorqueCommand(timestamp=timestamp, torques_nm=torques)
 
     # tick() removed in favor of compute_torque(features, timestamp)

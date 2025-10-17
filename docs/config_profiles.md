@@ -15,7 +15,6 @@ controllers:
       dt: 0.01
       torque_scale: 1.0
       torque_limit_nm: 30.0
-      gains: {...}
     torque_model:
       implementation: rpc_runtime.controllers.torque_models.bundle.BundleTorqueModel
       config:
@@ -34,8 +33,8 @@ Key fields:
 - `subject_mass_kg`: participant mass for Nm/kg → Nm conversion.
 - `assistance_fraction`: lab-level scaling factor applied to all torque outputs.
 
-All other controller configuration remains unchanged; gains, torque limits, and
-filter parameters still live under `controllers.<name>.config`. Replace the
+All other controller configuration remains unchanged; torque scaling and limits
+live under `controllers.<name>.config`. Replace the
 previous mock torque model with the bundle implementation when ready to deploy
 trained models on the Raspberry Pi.
 

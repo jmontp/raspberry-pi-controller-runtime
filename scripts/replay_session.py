@@ -29,11 +29,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from rpc_runtime.controllers.pi_controller import (
-    PIController,
-    PIControllerConfig,
-    PIControllerGains,
-)
+from rpc_runtime.controllers.pi_controller import PIController, PIControllerConfig
 from rpc_runtime.controllers.torque_models.onnx_runtime import ONNXTorqueModel
 from rpc_runtime.sensors.imu.base import IMUSample
 
@@ -53,7 +49,7 @@ OPTIONAL_COLUMNS = {
 
 
 def main() -> None:
-    """Replay a CSV of features through the PI controller and print sample output."""
+    """Replay a CSV of features through the feed-forward controller and print sample output."""
     parser = argparse.ArgumentParser(description="Replay recorded CSV through the controller")
     parser.add_argument("csv", type=Path)
     parser.add_argument("bundle", type=Path)
@@ -73,12 +69,8 @@ def main() -> None:
         torque_limit_nm=25,
         joints=(KNEE_TORQUE, ANKLE_TORQUE),
     )
-    gains = PIControllerGains(
-        kp={KNEE_TORQUE: 120, ANKLE_TORQUE: 80},
-        ki={KNEE_TORQUE: 5, ANKLE_TORQUE: 3},
-    )
     model = ONNXTorqueModel(args.bundle)
-    controller = PIController(config, gains, model)
+    controller = PIController(config, model)
 
     outputs = []
     for row in data.itertuples(index=False):

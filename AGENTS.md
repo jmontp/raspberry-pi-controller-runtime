@@ -103,7 +103,7 @@ starting a new chat or automation session.
 ## 7. Commit & branching strategy
 - Create a feature branch per task; keep commits focused.
 - Write descriptive commit messages in the imperative mood, e.g.,
-  `Add mock hardware stack for PI controller`.
+  `Add mock hardware stack for feed-forward controller`.
 - Never commit interpreter artefacts (`__pycache__`, `.pytest_cache`, etc.);
   `.gitignore` already covers these.
 - When working alongside user changes, avoid undoing their work without

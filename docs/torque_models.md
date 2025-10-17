@@ -17,8 +17,8 @@ thermal monitoring).
 ## Runtime configuration
 
 The runtime uses `BundleTorqueModel` to read the bundle metadata, convert Nm/kg
-torques to Nm, and apply an assistance fraction before the PI controller scales
-the command. Configure the controller profile like so:
+torques to Nm, and apply an assistance fraction before the feed-forward controller
+scales the command. Configure the controller profile like so:
 
 ```yaml
 controllers:
@@ -31,13 +31,6 @@ controllers:
       dt: 0.01
       torque_scale: 1.0
       torque_limit_nm: 30.0
-      gains:
-        kp:
-          knee_flexion_moment_ipsi_Nm: 8.0
-          ankle_dorsiflexion_moment_ipsi_Nm: 6.5
-        ki:
-          knee_flexion_moment_ipsi_Nm: 0.2
-          ankle_dorsiflexion_moment_ipsi_Nm: 0.15
     torque_model:
       implementation: rpc_runtime.controllers.torque_models.bundle.BundleTorqueModel
       config:
@@ -56,4 +49,4 @@ controllers:
 - `assistance_fraction` applies lab-level down-scaling for actuator limits.
 
 Additional heads (phase, task, etc.) remain in the bundle metadata for future
-controllers but are ignored by the current PI implementation.
+controllers but are ignored by the current feed-forward implementation.

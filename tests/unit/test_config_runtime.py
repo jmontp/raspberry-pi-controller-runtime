@@ -143,13 +143,6 @@ controllers:
       dt: 0.01
       torque_scale: 0.1
       torque_limit_nm: 10.0
-      gains:
-        kp:
-          knee_flexion_moment_right_Nm: 0.0
-          ankle_dorsiflexion_moment_right_Nm: 0.0
-        ki:
-          knee_flexion_moment_right_Nm: 0.0
-          ankle_dorsiflexion_moment_right_Nm: 0.0
     torque_model:
       implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
       config:
@@ -166,5 +159,7 @@ controllers:
         "knee_flexion_moment_ipsi_Nm",
         "ankle_dorsiflexion_moment_ipsi_Nm",
     )
-    gains = profile.controller.config.get("gains", {})
-    assert gains["kp"]["knee_flexion_moment_ipsi_Nm"] == 0.0
+    controller_cfg = profile.controller.config
+    assert controller_cfg["torque_scale"] == 0.1
+    assert controller_cfg["torque_limit_nm"] == 10.0
+    assert "gains" not in controller_cfg

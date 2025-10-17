@@ -10,11 +10,7 @@ from typing import Any, Dict, Iterable, Mapping
 import yaml
 
 from rpc_runtime.actuators.base import BaseActuator
-from rpc_runtime.controllers.pi_controller import (
-    PIController,
-    PIControllerConfig,
-    PIControllerGains,
-)
+from rpc_runtime.controllers.pi_controller import PIController, PIControllerConfig
 from rpc_runtime.controllers.torque_models.base import TorqueModel
 from rpc_runtime.runtime.wrangler import InputSchema, SchemaSignal
 from rpc_runtime.sensors.base import BaseSensor
@@ -375,18 +371,6 @@ def _parse_controllers(
         if not isinstance(config_payload, Mapping):
             raise ValueError(f"Controller '{name}' config must be a mapping")
         config_dict: dict[str, Any] = dict(config_payload)
-        gains_payload = config_dict.get("gains")
-        if isinstance(gains_payload, Mapping):
-            canonical_gains: dict[str, dict[str, Any]] = {}
-            for gain_name, gain_values in gains_payload.items():
-                if isinstance(gain_values, Mapping):
-                    canonical_gains[gain_name] = {
-                        _canonicalize_side_name(str(key)): value
-                        for key, value in gain_values.items()
-                    }
-                else:
-                    canonical_gains[gain_name] = gain_values
-            config_dict["gains"] = canonical_gains
         torque_model_payload = mapping.get("torque_model")
         if torque_model_payload is not None and not isinstance(torque_model_payload, Mapping):
             raise ValueError(f"Controller '{name}' torque_model must be a mapping")
@@ -423,23 +407,12 @@ def _build_controller(bundle: ControllerBundle) -> tuple[PIController, TorqueMod
         torque_limit_nm = float(config_payload.pop("torque_limit_nm"))
     except KeyError as exc:  # pragma: no cover - defensive
         raise ValueError(f"Controller bundle '{bundle.name}' missing field {exc}") from exc
-    velocity_alpha = float(config_payload.pop("velocity_filter_alpha", 0.1))
-    torque_alpha = float(config_payload.pop("torque_filter_alpha", 0.1))
-    gains_payload = config_payload.pop("gains", {})
-    if not isinstance(gains_payload, dict):
-        raise ValueError("Controller gains configuration must be a mapping")
-    kp = gains_payload.get("kp", {})
-    ki = gains_payload.get("ki", {})
-
     controller_config = PIControllerConfig(
         dt=dt,
         torque_scale=torque_scale,
         torque_limit_nm=torque_limit_nm,
         joints=bundle.manifest.joints,
-        velocity_filter_alpha=velocity_alpha,
-        torque_filter_alpha=torque_alpha,
     )
-    controller_gains = PIControllerGains(kp=dict(kp), ki=dict(ki))
 
     torque_model_info = bundle.torque_model or {}
     torque_model_impl = torque_model_info.get("implementation")
@@ -455,7 +428,6 @@ def _build_controller(bundle: ControllerBundle) -> tuple[PIController, TorqueMod
 
     controller = controller_cls(
         config=controller_config,
-        gains=controller_gains,
         torque_model=torque_model,
         input_schema=bundle.manifest.input_schema,
     )
