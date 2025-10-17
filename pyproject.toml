@@ -40,6 +40,7 @@ src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "C4", "I", "N"]
+extend-select = ["D"]
 ignore = ["E203", "E266", "E501"]
 
 [tool.ruff.lint.pydocstyle]

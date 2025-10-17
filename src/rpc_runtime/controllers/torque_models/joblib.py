@@ -93,9 +93,11 @@ class JoblibTorqueModel(TorqueModel):
     # ------------------------------------------------------------------
 
     def expected_features(self) -> Iterable[str]:
+        """Return the canonical feature order consumed by the joblib model."""
         return self._features
 
     def run(self, features: dict[str, float]) -> dict[str, float]:
+        """Execute the underlying joblib model and post-process torques."""
         row = {name: float(features.get(name, 0.0)) for name in self._features}
         df = pd.DataFrame([row], columns=self._features)
         if self._scaler is not None:

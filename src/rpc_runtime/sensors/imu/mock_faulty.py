@@ -24,6 +24,7 @@ class MockFaultyIMU(MockIMU):
         dropout_frames: int | None = None,
         seed: int | None = None,
     ) -> None:
+        """Initialise a mock IMU capable of injecting dropouts and frame drops."""
         if isinstance(config_override, dict):
             config_override = BaseIMUConfig(**config_override)
         super().__init__(samples=samples, loop=loop, config_override=config_override)
@@ -73,11 +74,13 @@ class MockFaultyIMU(MockIMU):
     # ------------------------------------------------------------------
 
     def start(self) -> None:  # pragma: no cover - parity with parent
+        """Start the underlying mock IMU and reset dropout state."""
         super().start()
         self._frames_to_drop = 0
         self._dropout_remaining = None
 
     def read(self) -> IMUSample:
+        """Return a sample while applying configured dropout behaviour."""
         # Ongoing dropout takes precedence
         if self._dropout_remaining is not None:
             if self._dropout_remaining == -1:

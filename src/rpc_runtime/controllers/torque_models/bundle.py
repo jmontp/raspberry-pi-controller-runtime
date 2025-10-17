@@ -114,9 +114,11 @@ class BundleTorqueModel(TorqueModel):
         raise ValueError(f"Unsupported bundle format '{format_name}'")
 
     def expected_features(self) -> Iterable[str]:
+        """Return the ordered feature names required by the bundle."""
         return self._features
 
     def run(self, features: dict[str, float]) -> dict[str, float]:
+        """Map incoming features through the underlying bundle backend."""
         backend_outputs = self._backend.run(dict(features))
         torques: Dict[str, float] = {}
         for joint, source in self._output_map.items():

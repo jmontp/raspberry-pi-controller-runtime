@@ -49,6 +49,7 @@ class ReplayVerticalGRF(BaseVerticalGRF):
     }
 
     def __post_init__(self) -> None:
+        """Normalise configuration overrides and initialise base class state."""
         override = self.config_override
         if isinstance(override, BaseVerticalGRFConfig):
             config = override
@@ -66,6 +67,7 @@ class ReplayVerticalGRF(BaseVerticalGRF):
             raise FileNotFoundError(self._path)
 
     def start(self) -> None:
+        """Load the dataset and prepare iteration state."""
         frame = self._load_frame()
         frame = self._apply_filters(frame)
         frame = self._slice_frame(frame)
@@ -76,11 +78,13 @@ class ReplayVerticalGRF(BaseVerticalGRF):
         self._cursor = 0
 
     def stop(self) -> None:
+        """Release cached frame data and reset indices."""
         self._frame = None
         self._timestamps = []
         self._cursor = 0
 
     def read(self) -> VerticalGRFSample:
+        """Return the next replayed GRF sample."""
         if self._frame is None:
             raise RuntimeError("ReplayVerticalGRF.start() must be called before read()")
         rows = len(self._frame)

@@ -16,6 +16,7 @@ class ControlInputs:
         samples: Mapping[str, Any] | None = None,
         **legacy_samples: Any,
     ) -> None:
+        """Normalise provided sensor samples into a unified mapping."""
         data = dict(samples or {})
         data.update(legacy_samples)
         self._samples = data
