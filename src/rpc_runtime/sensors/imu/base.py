@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import abc
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, Mapping, Protocol, Tuple, cast, runtime_checkable
 
@@ -221,6 +222,43 @@ class BaseIMU(BaseSensor):
         super().__init__(cfg)
         self._imu_config: BaseIMUConfig = cast(BaseIMUConfig, super().config)
         self._latest_measured: Dict[str, float] = {}
+
+    def await_startup_sample(
+        self,
+        signals: Iterable[str] | None = None,
+        *,
+        timeout_s: float | None = None,
+    ) -> None:
+        """Wait until a fresh sample covering requested canonicals is available."""
+        requested = set(signals or ())
+        handled = set(CANONICAL_SEGMENT_ANGLES) | set(CANONICAL_SEGMENT_VELOCITIES)
+        handled |= set(self.DERIVED_SIGNALS)
+        interested = [name for name in requested if name in handled]
+        if not interested:
+            return
+        poll = max(self.config.startup_poll_interval_s, 0.0)
+        deadline = None
+        if timeout_s is None:
+            timeout_s = self.config.startup_timeout_s
+        if timeout_s is not None and timeout_s > 0:
+            deadline = time.monotonic() + timeout_s
+
+        while True:
+            sample = self.read()
+            measured = self._collect_direct_signals(sample)
+            derived = self._collect_derived_signals(measured)
+            canonical = {**measured, **derived}
+            if self.last_sample_fresh and all(name in canonical for name in interested):
+                self._latest_measured = measured
+                return
+            if deadline is not None and time.monotonic() >= deadline:
+                missing = [name for name in interested if name not in canonical]
+                raise SensorStaleDataError(
+                    "Timed out waiting for fresh IMU data during startup for signals: "
+                    + ", ".join(sorted(missing))
+                )
+            if poll:
+                time.sleep(poll)
 
     @abc.abstractmethod
     def start(self) -> None:

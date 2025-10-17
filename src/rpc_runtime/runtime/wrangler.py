@@ -165,8 +165,14 @@ class DataWrangler:
 
     def start(self) -> None:
         """Start all configured sensors."""
-        for sensor in self._sensors.values():
+        for alias, sensor in self._sensors.items():
             sensor.start()
+            await_fn = getattr(sensor, "await_startup_sample", None)
+            if not callable(await_fn):
+                continue
+            signals = self._provider_signals.get(alias, ())
+            timeout = getattr(getattr(sensor, "config", None), "startup_timeout_s", None)
+            await_fn(signals, timeout_s=timeout)
 
     def stop(self) -> None:
         """Stop all configured sensors."""

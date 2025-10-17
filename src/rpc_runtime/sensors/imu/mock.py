@@ -67,6 +67,15 @@ class MockIMU(BaseIMU):
         """No-op stop hook for compatibility with context manager usage."""
         return None
 
+    def await_startup_sample(
+        self,
+        signals: Iterable[str] | None = None,
+        *,
+        timeout_s: float | None = None,
+    ) -> None:
+        """Mock sensors are ready immediately; no blocking required."""
+        return None
+
     def read(self) -> IMUSample:
         """Return the next mock sample, optionally cycling when `loop` is set."""
         if not self._samples:

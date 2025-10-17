@@ -64,8 +64,10 @@ class BaseSensorConfig:
 
     max_stale_samples: int = 5
     max_stale_time_s: float = 0.2
-    fault_strategy: str = "raise"  # raise, fallback, warn
+    fault_strategy: str = "fallback"  # raise, fallback, warn
     diagnostics_window: int = 128
+    startup_timeout_s: float | None = 1.0
+    startup_poll_interval_s: float = 0.01
 
 
 class SensorStaleDataError(RuntimeError):
@@ -91,6 +93,7 @@ class BaseSensor(abc.ABC):
             maxlen=self._config.diagnostics_window
         )
         self._event_origin: float | None = None
+        self._last_sample_fresh: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -122,6 +125,15 @@ class BaseSensor(abc.ABC):
         raise NotImplementedError(
             f"{self.__class__.__name__} does not implement 'read_signals'"
         )
+
+    def await_startup_sample(
+        self,
+        signals: Iterable[str] | None = None,
+        *,
+        timeout_s: float | None = None,
+    ) -> None:
+        """Block until the sensor has produced initial data (default no-op)."""
+        return None
 
     # ------------------------------------------------------------------
     # Diagnostics & validation
@@ -171,6 +183,11 @@ class BaseSensor(abc.ABC):
         """Active configuration for the sensor instance."""
         return self._config
 
+    @property
+    def last_sample_fresh(self) -> bool:
+        """Whether the most recent sample represented fresh data."""
+        return self._last_sample_fresh
+
     @classmethod
     def _validate_config(cls, config: BaseSensorConfig) -> BaseSensorConfig:
         """Validate base configuration constraints shared across sensors."""
@@ -184,6 +201,10 @@ class BaseSensor(abc.ABC):
         if strategy not in {"raise", "fallback", "warn"}:
             raise ValueError("fault_strategy must be 'raise', 'fallback', or 'warn'")
         config.fault_strategy = strategy
+        if config.startup_timeout_s is not None and config.startup_timeout_s < 0:
+            raise ValueError("startup_timeout_s must be non-negative or None")
+        if config.startup_poll_interval_s < 0:
+            raise ValueError("startup_poll_interval_s must be non-negative")
         return config
 
     # ------------------------------------------------------------------
@@ -203,13 +224,16 @@ class BaseSensor(abc.ABC):
         now = event_time if timestamp is None else float(timestamp)
         reason = self._check_stale(now, fresh)
         if reason is not None:
+            self._last_sample_fresh = False
             result = self._apply_fault_strategy(sample, now, reason, fallback_factory)
             self._record_sample_event(event_time, False)
             return result
         if sample is not None:
+            self._last_sample_fresh = True
             self._record_sample_event(event_time, True)
             return sample
         fallback_sample = fallback_factory(now)
+        self._last_sample_fresh = False
         self._record_sample_event(event_time, False)
         return fallback_sample
 
