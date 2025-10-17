@@ -22,10 +22,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff
       - name: Ruff check
-        working-directory: ./
-        run: |
-          cd raspberry-pi-controller-runtime
-          ruff check
+        run: ruff check
 
   typecheck:
     runs-on: ubuntu-latest
@@ -42,10 +39,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install mypy
       - name: Run mypy
-        working-directory: ./
-        run: |
-          cd raspberry-pi-controller-runtime
-          mypy src
+        run: mypy src
 
   tests:
     runs-on: ubuntu-latest
@@ -62,8 +56,4 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest
       - name: Run unit tests
-        working-directory: ./
-        run: |
-          cd raspberry-pi-controller-runtime
-          pytest -q tests/unit
-
+        run: pytest -q tests/unit
