@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping
+from typing import Any, Dict, Mapping
 
 import yaml
 
@@ -14,13 +14,16 @@ from rpc_runtime.controllers.pi_controller import PIController, PIControllerConf
 from rpc_runtime.controllers.torque_models.base import TorqueModel
 from rpc_runtime.runtime.wrangler import InputSchema, SchemaSignal
 from rpc_runtime.sensors.base import BaseSensor
+
 from .models import (
     ActuatorBinding,
     ControllerBundle,
     ControllerManifest,
-    RuntimeProfile as ProfileModel,
     SensorBinding,
     SignalRoute,
+)
+from .models import (
+    RuntimeProfile as ProfileModel,
 )
 
 RuntimeProfile = ProfileModel

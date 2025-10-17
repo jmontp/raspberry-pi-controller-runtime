@@ -146,7 +146,7 @@ class BaseSensor(abc.ABC):
             (1.0 / dt) if dt > 0 else math.inf for dt in self._history
         )
         if self._event_history:
-            timestamps, fresh_flags = zip(*self._event_history)
+            timestamps, fresh_flags = zip(*self._event_history, strict=False)
             fresh_ratio = sum(1.0 for flag in fresh_flags if flag) / len(fresh_flags)
             self._diagnostics.recent_event_timestamps = tuple(timestamps)
             self._diagnostics.recent_event_fresh = tuple(fresh_flags)

@@ -15,8 +15,8 @@ from typing import Mapping
 
 from ..actuators.base import TorqueCommand
 from ..sensors.combinators import ControlInputs
-from ..sensors.imu.base import IMUSample
 from ..sensors.grf.base import VerticalGRFSample
+from ..sensors.imu.base import IMUSample
 
 
 class DiagnosticsSink:
@@ -200,8 +200,7 @@ def _select_imu_sample(feature_packet: ControlInputs) -> IMUSample | None:
             return candidate
         if hasattr(candidate, "joint_angles_rad"):
             try:
-                angles = getattr(candidate, "joint_angles_rad")
-                velocities = getattr(candidate, "joint_velocities_rad_s", None)
+                angles = candidate.joint_angles_rad  # type: ignore[attr-defined]
             except Exception:
                 continue
             if angles is not None:

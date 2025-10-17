@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
-from typing import Callable, Iterable, Mapping, Sequence, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Iterable, Mapping, Sequence
 
 from ..actuators.base import BaseActuator
 from ..controllers.pi_controller import PIController
@@ -30,6 +31,8 @@ class RuntimeLoopConfig:
 
 class RuntimeLoop:
     """Orchestrate sensor polling, controller execution, and actuation."""
+
+    LOGGER = logging.getLogger(__name__)
 
     def __init__(
         self,
@@ -123,12 +126,12 @@ class RuntimeLoop:
                         try:
                             self._artifacts.publish_realtime(feature_snapshot, safe_command)
                         except Exception:  # pragma: no cover - defensive
-                            LOGGER.exception("Diagnostics realtime streaming failed")
+                            self.LOGGER.exception("Diagnostics realtime streaming failed")
                     if tick_hook is not None:
                         try:
                             tick_hook(feature_snapshot)
                         except Exception:  # pragma: no cover - defensive guard
-                            LOGGER.exception("Tick hook raised an exception; disabling hook")
+                            self.LOGGER.exception("Tick hook raised an exception; disabling hook")
                             tick_hook = None
                     self._actuator.apply(safe_command)
                     self._actuator.fault_if_needed()

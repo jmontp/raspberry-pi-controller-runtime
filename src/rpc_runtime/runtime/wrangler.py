@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import types
 from dataclasses import dataclass
-from typing import Dict, Iterable, Mapping, MutableMapping, Sequence, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Iterable, Mapping, MutableMapping, Sequence
 
 from ..sensors.base import BaseSensor
 from ..sensors.combinators import ControlInputs
@@ -193,7 +193,7 @@ class DataWrangler:
             sample, values = sensor.read_signals(signals)
             samples[alias] = sample
             if primary_timestamp is None and hasattr(sample, "timestamp"):
-                ts = getattr(sample, "timestamp")
+                ts = sample.timestamp  # type: ignore[attr-defined]
                 if ts is not None:
                     try:
                         primary_timestamp = float(ts)

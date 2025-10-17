@@ -10,12 +10,13 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence, TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable, Mapping, Sequence
 
 import numpy as np
-from .diagnostics import CSVDiagnosticsSink, DiagnosticsSink
+
 from ..actuators.base import TorqueCommand
 from ..sensors.base import BaseSensor
+from .diagnostics import CSVDiagnosticsSink, DiagnosticsSink
 
 LOGGER = logging.getLogger(__name__)
 
@@ -104,11 +105,11 @@ GRF_SIGNALS = [
 ]
 
 SIGNAL_UNITS: dict[str, str] = {}
-SIGNAL_UNITS.update({name: "rad" for name in ANGLE_SIGNALS})
-SIGNAL_UNITS.update({name: "rad/s" for name in VELOCITY_SIGNALS})
-SIGNAL_UNITS.update({name: "rad" for name in SEGMENT_ANGLE_SIGNALS})
-SIGNAL_UNITS.update({name: "rad/s" for name in SEGMENT_VELOCITY_SIGNALS})
-SIGNAL_UNITS.update({name: "N" for name in GRF_SIGNALS})
+SIGNAL_UNITS.update(dict.fromkeys(ANGLE_SIGNALS, "rad"))
+SIGNAL_UNITS.update(dict.fromkeys(VELOCITY_SIGNALS, "rad/s"))
+SIGNAL_UNITS.update(dict.fromkeys(SEGMENT_ANGLE_SIGNALS, "rad"))
+SIGNAL_UNITS.update(dict.fromkeys(SEGMENT_VELOCITY_SIGNALS, "rad/s"))
+SIGNAL_UNITS.update(dict.fromkeys(GRF_SIGNALS, "N"))
 
 SIGNAL_ORDER: list[str] = (
     ANGLE_SIGNALS
@@ -546,7 +547,7 @@ class DiagnosticsArtifacts:
             events = list(
                 zip(
                     getattr(diagnostics, "recent_event_timestamps", ()) or (),
-                    getattr(diagnostics, "recent_event_fresh", ()) or (),
+                    getattr(diagnostics, "recent_event_fresh", ()) or (), strict=False,
                 )
             )
             availability_plot_path = None
@@ -858,7 +859,7 @@ class DiagnosticsArtifacts:
         for column in sorted(c for c in df.columns if c.startswith("torque_safe_")):
             _append_entry(column)
 
-        feature_columns = set(col for col, _, _, _, _ in entries if not col.startswith("torque_safe_"))
+        feature_columns = {col for col, _, _, _, _ in entries if not col.startswith("torque_safe_")}
         for column in sorted(c for c in df.columns if c not in feature_columns and not c.startswith("torque_") and not c.startswith("scheduler_") and c not in {"timestamp"}):
             _append_entry(column)
 
@@ -902,7 +903,7 @@ class DiagnosticsArtifacts:
         fig.suptitle(title, fontsize=14, y=0.995)
         if len(entries) == 1:
             axes = [axes]  # type: ignore[list-item]
-        for ax, (_, name, unit, color, series) in zip(axes, entries):
+        for ax, (_, name, unit, color, series) in zip(axes, entries, strict=False):
             values = series.to_numpy(dtype=float, copy=True)
             finite_mask = np.isfinite(values)
             aligned_time = time_values
@@ -976,7 +977,7 @@ class DiagnosticsArtifacts:
             tail_extension = expected_period_s if isinstance(expected_period_s, (int, float)) and expected_period_s > 0 else 0.1
             span_end = rel_times[-1] + tail_extension
         span_end = max(span_end, rel_times[-1] if rel_times else 0.1, 0.1)
-        for time_value, is_fresh in zip(rel_times, freshness):
+        for time_value, is_fresh in zip(rel_times, freshness, strict=False):
             if not is_fresh:
                 ax.axvline(time_value, color="#e53e3e", linewidth=1.4, alpha=0.9)
 

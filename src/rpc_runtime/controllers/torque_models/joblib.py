@@ -138,7 +138,7 @@ class JoblibTorqueModel(TorqueModel):
         feature_names = getattr(self._model, "feature_names", None)
         if feature_names:
             return tuple(feature_names)
-        return tuple()
+        return ()
 
     def _extract_torque_columns(self, training_metadata: str | None) -> tuple[str, ...]:
         columns = getattr(self._model, "torque_cols", None)
@@ -162,4 +162,4 @@ class JoblibTorqueModel(TorqueModel):
                     return tuple(cols)
             except Exception:  # pragma: no cover - best effort fallback
                 pass
-        return tuple()
+        return ()
