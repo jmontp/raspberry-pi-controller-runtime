@@ -20,10 +20,26 @@ def test_controller_with_mock_devices() -> None:
     """Integration-style check covering controller + scheduling with mocks."""
     imu_sample = IMUSample(
         timestamp=0.0,
-        joint_angles_rad=(0.1, -0.05),
-        joint_velocities_rad_s=(0.0, 0.0),
-        segment_angles_rad=(0.0, 0.0, 0.0),
-        segment_velocities_rad_s=(0.0, 0.0, 0.0),
+        joint_angles_rad=(0.1, 0.05, 0.02, -0.1, -0.05, -0.02),
+        joint_velocities_rad_s=(0.2, 0.08, 0.03, -0.15, -0.06, -0.03),
+        segment_angles_rad=(
+            0.3,
+            0.2,
+            0.1,
+            0.05,
+            0.25,
+            0.15,
+            0.08,
+        ),
+        segment_velocities_rad_s=(
+            0.0,
+            0.05,
+            0.02,
+            0.01,
+            0.04,
+            0.015,
+            0.005,
+        ),
     )
     mock_imu = MockIMU(samples=[imu_sample], loop=True)
     assert mock_imu.port_map, "Mock IMU should expose a default port map"

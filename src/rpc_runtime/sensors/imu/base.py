@@ -55,25 +55,8 @@ DEFAULT_PORT_MAP: Dict[str, str] = {
     "foot_l": "/dev/ttyIMU_foot_l",
 }
 
-CANONICAL_JOINT_ANGLES: Dict[str, str] = {
-    "hip_flexion_angle_ipsi_rad": "hip_r",
-    "knee_flexion_angle_ipsi_rad": "knee_r",
-    "ankle_dorsiflexion_angle_ipsi_rad": "ankle_r",
-    "hip_flexion_angle_contra_rad": "hip_l",
-    "knee_flexion_angle_contra_rad": "knee_l",
-    "ankle_dorsiflexion_angle_contra_rad": "ankle_l",
-}
-
-CANONICAL_JOINT_VELOCITIES: Dict[str, str] = {
-    "hip_flexion_velocity_ipsi_rad_s": "hip_r",
-    "knee_flexion_velocity_ipsi_rad_s": "knee_r",
-    "ankle_dorsiflexion_velocity_ipsi_rad_s": "ankle_r",
-    "hip_flexion_velocity_contra_rad_s": "hip_l",
-    "knee_flexion_velocity_contra_rad_s": "knee_l",
-    "ankle_dorsiflexion_velocity_contra_rad_s": "ankle_l",
-}
-
 CANONICAL_SEGMENT_ANGLES: Dict[str, str] = {
+    "trunk_sagittal_angle_rad": "trunk",
     "thigh_sagittal_angle_ipsi_rad": "thigh_r",
     "shank_sagittal_angle_ipsi_rad": "shank_r",
     "foot_sagittal_angle_ipsi_rad": "foot_r",
@@ -83,6 +66,7 @@ CANONICAL_SEGMENT_ANGLES: Dict[str, str] = {
 }
 
 CANONICAL_SEGMENT_VELOCITIES: Dict[str, str] = {
+    "trunk_sagittal_velocity_rad_s": "trunk",
     "thigh_sagittal_velocity_ipsi_rad_s": "thigh_r",
     "shank_sagittal_velocity_ipsi_rad_s": "shank_r",
     "foot_sagittal_velocity_ipsi_rad_s": "foot_r",
@@ -91,15 +75,12 @@ CANONICAL_SEGMENT_VELOCITIES: Dict[str, str] = {
     "foot_sagittal_velocity_contra_rad_s": "foot_l",
 }
 
-LEGACY_JOINT_ANGLE_INDICES: Dict[str, int] = {
-    "knee_flexion_angle_ipsi_rad": 0,
-    "ankle_dorsiflexion_angle_ipsi_rad": 1,
-}
 
-LEGACY_JOINT_VELOCITY_INDICES: Dict[str, int] = {
-    "knee_flexion_velocity_ipsi_rad_s": 0,
-    "ankle_dorsiflexion_velocity_ipsi_rad_s": 1,
-}
+def _segment_difference(lhs: str, rhs: str) -> Callable[[Mapping[str, float]], float]:
+    def _compute(measured: Mapping[str, float], a: str = lhs, b: str = rhs) -> float:
+        return measured[a] - measured[b]
+
+    return _compute
 
 
 @dataclass(slots=True)
@@ -173,15 +154,53 @@ class BaseIMU(BaseSensor):
     """
 
     DERIVED_SIGNALS: Dict[str, tuple[tuple[str, ...], Callable[[Mapping[str, float]], float]]] = {
+        "hip_flexion_angle_ipsi_rad": (
+            ("trunk_sagittal_angle_rad", "thigh_sagittal_angle_ipsi_rad"),
+            _segment_difference("trunk_sagittal_angle_rad", "thigh_sagittal_angle_ipsi_rad"),
+        ),
+        "hip_flexion_angle_contra_rad": (
+            ("trunk_sagittal_angle_rad", "thigh_sagittal_angle_contra_rad"),
+            _segment_difference("trunk_sagittal_angle_rad", "thigh_sagittal_angle_contra_rad"),
+        ),
         "knee_flexion_angle_ipsi_rad": (
             ("thigh_sagittal_angle_ipsi_rad", "shank_sagittal_angle_ipsi_rad"),
-            lambda measured: measured["thigh_sagittal_angle_ipsi_rad"]
-            - measured["shank_sagittal_angle_ipsi_rad"],
+            _segment_difference("thigh_sagittal_angle_ipsi_rad", "shank_sagittal_angle_ipsi_rad"),
         ),
         "knee_flexion_angle_contra_rad": (
             ("thigh_sagittal_angle_contra_rad", "shank_sagittal_angle_contra_rad"),
-            lambda measured: measured["thigh_sagittal_angle_contra_rad"]
-            - measured["shank_sagittal_angle_contra_rad"],
+            _segment_difference("thigh_sagittal_angle_contra_rad", "shank_sagittal_angle_contra_rad"),
+        ),
+        "ankle_dorsiflexion_angle_ipsi_rad": (
+            ("shank_sagittal_angle_ipsi_rad", "foot_sagittal_angle_ipsi_rad"),
+            _segment_difference("shank_sagittal_angle_ipsi_rad", "foot_sagittal_angle_ipsi_rad"),
+        ),
+        "ankle_dorsiflexion_angle_contra_rad": (
+            ("shank_sagittal_angle_contra_rad", "foot_sagittal_angle_contra_rad"),
+            _segment_difference("shank_sagittal_angle_contra_rad", "foot_sagittal_angle_contra_rad"),
+        ),
+        "hip_flexion_velocity_ipsi_rad_s": (
+            ("trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_ipsi_rad_s"),
+            _segment_difference("trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_ipsi_rad_s"),
+        ),
+        "hip_flexion_velocity_contra_rad_s": (
+            ("trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_contra_rad_s"),
+            _segment_difference("trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_contra_rad_s"),
+        ),
+        "knee_flexion_velocity_ipsi_rad_s": (
+            ("thigh_sagittal_velocity_ipsi_rad_s", "shank_sagittal_velocity_ipsi_rad_s"),
+            _segment_difference("thigh_sagittal_velocity_ipsi_rad_s", "shank_sagittal_velocity_ipsi_rad_s"),
+        ),
+        "knee_flexion_velocity_contra_rad_s": (
+            ("thigh_sagittal_velocity_contra_rad_s", "shank_sagittal_velocity_contra_rad_s"),
+            _segment_difference("thigh_sagittal_velocity_contra_rad_s", "shank_sagittal_velocity_contra_rad_s"),
+        ),
+        "ankle_dorsiflexion_velocity_ipsi_rad_s": (
+            ("shank_sagittal_velocity_ipsi_rad_s", "foot_sagittal_velocity_ipsi_rad_s"),
+            _segment_difference("shank_sagittal_velocity_ipsi_rad_s", "foot_sagittal_velocity_ipsi_rad_s"),
+        ),
+        "ankle_dorsiflexion_velocity_contra_rad_s": (
+            ("shank_sagittal_velocity_contra_rad_s", "foot_sagittal_velocity_contra_rad_s"),
+            _segment_difference("shank_sagittal_velocity_contra_rad_s", "foot_sagittal_velocity_contra_rad_s"),
         ),
     }
 
@@ -232,38 +251,6 @@ class BaseIMU(BaseSensor):
     def _collect_direct_signals(self, sample: IMUSample) -> Dict[str, float]:
         """Extract canonical signals available directly from the IMU sample."""
         measured: Dict[str, float] = {}
-        joint_angle_data = getattr(sample, "joint_angles_rad", ())
-        joint_velocity_data = getattr(sample, "joint_velocities_rad_s", ())
-        expected_joint_len = len(self.joint_names)
-
-        for canonical, joint_name in CANONICAL_JOINT_ANGLES.items():
-            value = None
-            if expected_joint_len and len(joint_angle_data) == expected_joint_len:
-                value = self._resolve_named_joint(sample, "joint_angles_rad", joint_name)
-            if value is None:
-                legacy_index = LEGACY_JOINT_ANGLE_INDICES.get(canonical)
-                if legacy_index is not None:
-                    value = self._resolve_joint_attribute(sample, "joint_angles_rad", legacy_index)
-            if value is not None:
-                measured[canonical] = value
-
-        for canonical, joint_name in CANONICAL_JOINT_VELOCITIES.items():
-            value = None
-            if expected_joint_len and len(joint_velocity_data) == expected_joint_len:
-                value = self._resolve_named_joint(
-                    sample,
-                    "joint_velocities_rad_s",
-                    joint_name,
-                )
-            if value is None:
-                legacy_index = LEGACY_JOINT_VELOCITY_INDICES.get(canonical)
-                if legacy_index is not None:
-                    value = self._resolve_joint_attribute(
-                        sample, "joint_velocities_rad_s", legacy_index
-                    )
-            if value is not None:
-                measured[canonical] = value
-
         for canonical, segment_name in CANONICAL_SEGMENT_ANGLES.items():
             value = self._resolve_named_segment(sample, "segment_angles_rad", segment_name)
             if value is not None:
