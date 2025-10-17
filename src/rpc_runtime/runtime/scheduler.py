@@ -6,7 +6,11 @@ import abc
 import contextlib
 import time
 from dataclasses import dataclass
-from typing import Callable, Iterable, Iterator, Protocol
+from typing import Callable, Iterable, Iterator, Mapping, Protocol
+
+
+class SchedulerFault(RuntimeError):  # noqa: N818
+    """Raised when the scheduler detects sustained timing overruns."""
 
 
 class BaseScheduler(abc.ABC):
@@ -19,6 +23,10 @@ class BaseScheduler(abc.ABC):
     def close(self) -> None:
         """Optional cleanup hook executed when leaving the scheduler context."""
         return None
+
+    def metrics(self) -> Mapping[str, float]:  # pragma: no cover - default no-op
+        """Return timing metrics collected by the scheduler."""
+        return {}
 
     def __enter__(self) -> "BaseScheduler":
         """Enter the scheduler context."""
@@ -35,22 +43,93 @@ class SimpleScheduler(BaseScheduler):
 
     frequency_hz: float
     duration_s: float | None = None
+    jitter_budget_s: float = 0.0
+    max_overruns_before_fault: int = 3
+
+    def __post_init__(self) -> None:
+        """Normalise configuration and initialise jitter tracking."""
+        if self.frequency_hz <= 0:
+            raise ValueError("frequency_hz must be positive")
+        if self.jitter_budget_s < 0:
+            raise ValueError("jitter_budget_s must be non-negative")
+        self._dt_target = 1.0 / float(self.frequency_hz)
+        self._overrun_threshold = max(0, int(self.max_overruns_before_fault))
+        self._overrun_streak = 0
+        self._tick_count = 0
+        self._last_dt_actual: float | None = None
+        self._last_jitter: float | None = None
+        self._jitter_min: float | None = None
+        self._jitter_max: float | None = None
+        self._jitter_sum = 0.0
+        self._jitter_count = 0
 
     def ticks(self) -> Iterator[float]:
         """Yield elapsed time while sleeping to maintain the requested frequency."""
-        dt = 1.0 / self.frequency_hz
         start = time.monotonic()
         count = 0
+        previous = start
         while True:
-            target = start + count * dt
+            target = start + count * self._dt_target
             now = time.monotonic()
             sleep_time = target - now
             if sleep_time > 0:
                 time.sleep(sleep_time)
-            yield time.monotonic() - start
+                now = time.monotonic()
+
+            actual_dt = now - previous
+            previous = now
+            self._record_tick(actual_dt)
+
+            elapsed = now - start
+            yield elapsed
+
             count += 1
-            if self.duration_s is not None and (time.monotonic() - start) >= self.duration_s:
+            if self.duration_s is not None and elapsed >= self.duration_s:
                 break
+
+    def metrics(self) -> Mapping[str, float]:
+        """Return the latest scheduler timing metrics."""
+        jitter_min = self._jitter_min if self._jitter_min is not None else 0.0
+        jitter_max = self._jitter_max if self._jitter_max is not None else 0.0
+        jitter_mean = self._jitter_sum / self._jitter_count if self._jitter_count else 0.0
+        dt_actual = self._last_dt_actual if self._last_dt_actual is not None else self._dt_target
+        jitter_latest = self._last_jitter if self._last_jitter is not None else 0.0
+        return {
+            "dt_target_s": float(self._dt_target),
+            "dt_actual_s": float(dt_actual),
+            "jitter_latest_s": float(jitter_latest),
+            "jitter_min_s": float(jitter_min),
+            "jitter_max_s": float(jitter_max),
+            "jitter_mean_s": float(jitter_mean),
+            "overrun_streak": float(self._overrun_streak),
+            "ticks": float(self._tick_count),
+        }
+
+    def _record_tick(self, actual_dt: float) -> None:
+        """Update jitter statistics and enforce overrun policies."""
+        self._tick_count += 1
+        self._last_dt_actual = actual_dt
+        jitter = actual_dt - self._dt_target
+        self._last_jitter = jitter
+        self._update_jitter_extrema(jitter)
+
+        if self._overrun_threshold and actual_dt > (self._dt_target + self.jitter_budget_s):
+            self._overrun_streak += 1
+            if self._overrun_streak >= self._overrun_threshold:
+                raise SchedulerFault(
+                    f"Scheduler detected {self._overrun_streak} consecutive overruns"
+                )
+        else:
+            self._overrun_streak = 0
+
+    def _update_jitter_extrema(self, jitter: float) -> None:
+        """Track jitter distribution statistics."""
+        self._jitter_count += 1
+        self._jitter_sum += jitter
+        if self._jitter_min is None or jitter < self._jitter_min:
+            self._jitter_min = jitter
+        if self._jitter_max is None or jitter > self._jitter_max:
+            self._jitter_max = jitter
 
 
 @dataclass(slots=True)

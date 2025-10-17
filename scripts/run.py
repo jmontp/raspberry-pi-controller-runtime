@@ -14,8 +14,8 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from rpc_runtime.config import build_runtime_components, load_runtime_profile
-from rpc_runtime.runtime import DiagnosticsArtifacts, RuntimeLoop, RuntimeLoopConfig
+from rpc_runtime.config import build_runtime_components, load_runtime_profile  # noqa: E402
+from rpc_runtime.runtime import DiagnosticsArtifacts, RuntimeLoop, RuntimeLoopConfig  # noqa: E402
 
 LOGGER = logging.getLogger("rpc_runtime.scripts.run")
 
@@ -24,6 +24,7 @@ DEFAULT_DIAGNOSTICS_ROOT = DEFAULT_PROFILE_PATH.with_name("diagnostics")
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse CLI arguments for the runtime loop helper."""
     parser = argparse.ArgumentParser(description="Run the controller runtime loop")
     parser.add_argument(
         "--config",
@@ -99,6 +100,7 @@ def run_loop(
     rtplot: bool,
     rtplot_host: str,
 ) -> Path | None:
+    """Build runtime components and execute the control loop."""
     profile = load_runtime_profile(profile_path)
     components = build_runtime_components(profile)
     effective_profile_name = profile_name_override or profile.name
@@ -148,6 +150,7 @@ def run_loop(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Entry point for the runtime loop CLI."""
     args = parse_args(argv)
     _configure_logging(args.verbose)
 

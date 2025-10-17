@@ -126,12 +126,12 @@ across mock and hardware-backed deployments.
   `HardwareAvailabilityError`.
 - `probe()` — performs lightweight readiness checks (e.g., ensure `/dev`
 - `start()` — opens all configured sensors, performs warm-up/calibration, and
-  readies the reusable feature buffer for runtime ticks.
 - `get_sensor_data()` — asks each sensor for its subscribed signals, stores the
   responses in the canonical buffer order, and returns a read-only view along
-  with metadata (timestamps, staleness flags). Missing required measurements
-  raise `SensorStaleDataError` by default, while optional signals fall back to
-  their configured default.
+  with metadata (timestamp, stale flag, optional coverage map). Missing required
+  measurements raise `SensorStaleDataError` by default, while optional signals
+  fall back to their configured defaults but are tracked via
+  `FeatureMetadata.optional_presence` / `missing_optional` for diagnostics.
 - `stop()` — stops all sensors and flushes modality diagnostics.
 
 Plan construction happens in the constructor. After `start()` succeeds, the
@@ -161,23 +161,16 @@ tick.
 
 ### Diagnostics sink contract
 
-- The runtime depends on an injectable `DiagnosticsSink` backed by a
-  preallocated `pandas.DataFrame` indexed by time. Columns are derived from the
-  controller IO manifest so inbound rows are fixed-width.
-- Core interface:
-  - `DiagnosticsSink(columns, capacity, *, extra_columns=None)` — constructor
-    builds an empty DataFrame with a monotonic-time index and zero-filled data
-    block sized for the expected run length. Optional metadata columns (e.g.,
-    scheduler jitter) can be declared up front.
-  - `append(timestamp, data_array)` — invoked once per tick after safety
-    clamping. Writes the timestamp into the index and copies the dense
-    `numpy` array of feature/torque values into the preallocated columns.
-    Diagnostics must swallow/log errors so the control loop never breaks.
-  - `finalise()` — trims unused rows and returns/persists the DataFrame during
-    teardown.
-- The sink does not duplicate per-sensor or per-actuator diagnostics; those stay
-  with modality-specific loggers. Additional columns can be declared during
-  construction when extra metrics are needed.
+- The runtime depends on an injectable `DiagnosticsSink` exposing
+  `log_tick(...)` and `flush()` methods. Each `log_tick` call receives the
+  timestamped feature snapshot, raw/safe torque commands, the `ControlInputs`
+  bundle, and runtime metadata such as scheduler and safety metrics.
+- The default implementation (`CSVDiagnosticsSink`) derives its header on the
+  first tick and appends rows to `data.csv`. Scheduler-derived keys appear with
+  a `scheduler_` prefix, while safety counters are emitted as
+  `scheduler_safety_*` columns.
+- Custom sinks should swallow their own errors and avoid blocking the control
+  loop; heavy processing belongs in post-run tooling.
 
 ## Safety behaviour
 
@@ -214,16 +207,17 @@ structured `try/except/finally` blocks rather than explicit state transitions.
 
 ## Diagnostics format
 
-- **Run log** (`run.log`): the primary pandas DataFrame persisted to disk
-  (Parquet/Feather/CSV). Each row includes `{timestamp, feature_packet,
-  torque_command_raw, torque_command_safe, scheduler_metrics, safety_metrics}`
-  plus any additional columns declared at sink construction.
+- **Primary log** (`data.csv`): the CSV written by `CSVDiagnosticsSink`. Each
+  row captures `{timestamp, feature_snapshot, torque_command_raw,
+  torque_command_safe, scheduler_metrics, safety_metrics}` plus any optional
+  columns derived from runtime metadata (for example,
+  `scheduler_optional_<signal>_present` and `scheduler_optional_missing_count`).
 - **Diagnostics folder** (`diagnostics/`): optional supplemental artefacts such
   as readiness reports or actuator fault summaries written as JSONL/CSV. All
   files reside in this single directory with schema-versioned filenames (for
   example, `diagnostics/actuator_faults_v1.jsonl`).
 
-Downstream tooling monitors `run.log` and, when present, ingests additional
+Downstream tooling monitors `data.csv` and, when present, ingests additional
 files from `diagnostics/`. No per-component subdirectories are required.
 
 ## Failure and retry policy
@@ -553,9 +547,9 @@ ordering.
 - Diagnostics write into a single `diagnostics/` directory under the configured
   log root. Files are JSONL/CSV snapshots (readiness reports, actuator summaries)
   with schema-versioned filenames so tooling can evolve alongside the runtime.
-- Each runtime session emits `run.log` (the pandas DataFrame persisted to disk,
-  e.g., Parquet) containing time-aligned feature packets, commanded torques,
-  scheduler jitter, and shutdown events.
+- Each runtime session emits `data.csv` (the diagnostics CSV persisted to disk)
+  containing time-aligned feature packets, commanded torques, scheduler jitter,
+  safety counters, and shutdown events.
 
 ### Extensibility checklist
 

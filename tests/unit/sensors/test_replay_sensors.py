@@ -5,10 +5,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from rpc_runtime.sensors.imu.replay import ReplayIMU
+from rpc_runtime.sensors.grf.base import BaseVerticalGRFConfig
 from rpc_runtime.sensors.grf.replay import ReplayVerticalGRF
 from rpc_runtime.sensors.imu.base import BaseIMUConfig
-from rpc_runtime.sensors.grf.base import BaseVerticalGRFConfig
+from rpc_runtime.sensors.imu.replay import ReplayIMU
 
 
 def _write_csv(tmp_path: Path, name: str, frame: pd.DataFrame) -> Path:

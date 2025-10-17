@@ -8,6 +8,7 @@ from typing import Mapping
 from rpc_runtime.runtime.wrangler import InputSchema
 
 from ..actuators.base import TorqueCommand
+from .base import ControllerFault
 from .torque_models.base import TorqueModel
 
 
@@ -64,7 +65,12 @@ class PIController:
             feature_map = features.as_dict()  # type: ignore[assignment]
         else:
             feature_map = dict(features)
-        torque_ff = self._torque_model.run(dict(feature_map))
+        try:
+            torque_ff = self._torque_model.run(dict(feature_map))
+        except Exception as exc:  # pragma: no cover - defensive guard
+            raise ControllerFault(
+                f"{self.__class__.__name__} failed to compute torques: {exc}"
+            ) from exc
         torques: dict[str, float] = {}
         limit = float(self._config.torque_limit_nm)
         apply_limit = limit > 0
@@ -75,6 +81,11 @@ class PIController:
                 torque = max(min(torque, limit), -limit)
             torques[joint] = torque
         return TorqueCommand(timestamp=timestamp, torques_nm=torques)
+
+    @property
+    def joint_names(self) -> tuple[str, ...]:
+        """Return the ordered joint names governed by this controller."""
+        return tuple(self._config.joints)
 
     # tick() removed in favor of compute_torque(features, timestamp)
 
