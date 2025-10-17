@@ -5,7 +5,7 @@ from __future__ import annotations
 import abc
 import logging
 from dataclasses import dataclass
-from typing import Dict, Iterable, Tuple, cast
+from typing import Callable, Dict, Iterable, Tuple, cast
 
 from ..base import BaseSensor, BaseSensorConfig, SensorStaleDataError
 
@@ -67,16 +67,17 @@ class BaseVerticalGRF(BaseSensor):
         """Initialise the base with validated GRF configuration."""
         cfg = config or BaseVerticalGRFConfig()
         super().__init__(cfg)
+        self._grf_config: BaseVerticalGRFConfig = cast(BaseVerticalGRFConfig, super().config)
 
     @property
     def config(self) -> BaseVerticalGRFConfig:
         """Active configuration for this GRF instance."""
-        return cast(BaseVerticalGRFConfig, super().config)
+        return self._grf_config
 
     @property
     def channel_names(self) -> tuple[str, ...]:
         """Channel names in the order emitted by :meth:`read`."""
-        return self._config.channel_names
+        return self._grf_config.channel_names
 
     @property
     def channel_force_conventions(self) -> Dict[str, str]:
@@ -116,6 +117,7 @@ class BaseVerticalGRF(BaseSensor):
         sample: VerticalGRFSample | None,
         *,
         fresh: bool,
+        fallback_factory: Callable[[float], object] | None = None,
     ) -> VerticalGRFSample:
 
         def fallback(timestamp: float) -> VerticalGRFSample:
@@ -124,13 +126,17 @@ class BaseVerticalGRF(BaseSensor):
                 forces_newton=tuple(0.0 for _ in self.channel_names),
             )
 
+        factory: Callable[[float], object] = fallback_factory or fallback
         try:
-            return super()._handle_sample(sample, fresh=fresh, fallback_factory=fallback)
+            result = super()._handle_sample(sample, fresh=fresh, fallback_factory=factory)
         except SensorStaleDataError as exc:
             raise GRFStaleDataError(str(exc)) from exc
+        return cast(VerticalGRFSample, result)
 
     @classmethod
-    def _validate_config(cls, config: BaseVerticalGRFConfig) -> BaseVerticalGRFConfig:
+    def _validate_config(cls, config: BaseSensorConfig) -> BaseSensorConfig:
+        if not isinstance(config, BaseVerticalGRFConfig):
+            raise TypeError("BaseVerticalGRF requires a BaseVerticalGRFConfig instance")
         config = cast(BaseVerticalGRFConfig, super()._validate_config(config))
         channels = tuple(config.channel_names)
         if not channels:

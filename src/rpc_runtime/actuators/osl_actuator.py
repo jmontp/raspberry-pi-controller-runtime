@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Dict, Iterable
+from typing import Any, Dict, Iterable
 
 from .base import ActuatorError, BaseActuator, BaseActuatorConfig, TorqueCommand
 
 try:  # pragma: no cover - hardware dependency
     from opensourceleg.osl import OpenSourceLeg
 except ImportError:  # noqa: F401 pragma: no cover - optional
-    OpenSourceLeg = None
+    OpenSourceLeg = None  # type: ignore[assignment]
 
 
 @dataclass(slots=True)
@@ -52,8 +52,8 @@ class OSLActuator(BaseActuator):
         joint_names = tuple(joint.name for joint in config.joints)
         super().__init__(BaseActuatorConfig(joint_names=joint_names))
         self._leg_config = config
-        self._leg = OpenSourceLeg(frequency=config.controller_hz)
-        self._joint_handles: Dict[str, object] = {}
+        self._leg: Any = OpenSourceLeg(frequency=config.controller_hz)
+        self._joint_handles: Dict[str, Any] = {}
 
     def start(self) -> None:
         """Connect to hardware and register joints with the OSL API."""
@@ -61,7 +61,7 @@ class OSLActuator(BaseActuator):
             self._leg.add_joint(name=joint.name, gear_ratio=joint.gear_ratio, port=joint.port)
         self._leg.__enter__()
         for joint in self._leg_config.joints:
-            handle = getattr(self._leg, joint.name)
+            handle: Any = getattr(self._leg, joint.name)
             handle.set_mode(handle.control_modes.current)
             self._joint_handles[joint.name] = handle
 
@@ -82,7 +82,7 @@ class OSLActuator(BaseActuator):
         if missing:
             raise ActuatorError(f"Torque command contains unknown joints: {missing}")
         for joint_name, torque in command.torques_nm.items():
-            handle = self._joint_handles[joint_name]
+            handle: Any = self._joint_handles[joint_name]
             handle.set_torque(float(torque))
 
     def fault_if_needed(self) -> None:
@@ -101,7 +101,13 @@ class OSLActuator(BaseActuator):
 
     @staticmethod
     def _build_config_from_mapping(config: Mapping[str, object]) -> OSLLegConfig:
-        controller_hz = int(config.get("controller_hz", 500))
+        controller_value = config.get("controller_hz", 500)
+        if isinstance(controller_value, (int, float)):
+            controller_hz = int(controller_value)
+        elif isinstance(controller_value, str):
+            controller_hz = int(controller_value)
+        else:
+            raise TypeError("controller_hz must be an int, float, or string representation")
         joints_raw = config.get("joints", ())
         joints: list[OSLJoint] = []
         if isinstance(joints_raw, Iterable):

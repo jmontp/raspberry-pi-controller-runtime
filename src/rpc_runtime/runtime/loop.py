@@ -103,7 +103,7 @@ class RuntimeLoop:
                     features_view, meta, control_inputs = self._wrangler.get_sensor_data()
                     feature_snapshot = dict(features_view.as_dict())
                     raw_command = self._controller.compute_torque(
-                        features_view,
+                        feature_snapshot,
                         timestamp=meta.timestamp,
                     )
                     safe_command = self._safety.enforce(raw_command)

@@ -11,7 +11,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, TextIO
 
 from ..actuators.base import TorqueCommand
 from ..sensors.combinators import ControlInputs
@@ -103,7 +103,7 @@ class CSVDiagnosticsSink(DiagnosticsSink):
         self._path = Path(path)
         self._include_segments = include_segments
         self._writer: csv.DictWriter | None = None
-        self._file = None
+        self._file: TextIO | None = None
         self._columns: list[str] | None = None
         self._feature_keys: tuple[str, ...] | None = None
         self._torque_keys: tuple[str, ...] | None = None

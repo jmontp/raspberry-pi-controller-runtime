@@ -129,7 +129,7 @@ class DataWrangler:
             alias: tuple(signals) for alias, signals in provider_signals.items()
         }
 
-        available_for_validation = set()
+        available_for_validation: set[str] = set()
         for signals in self._provider_signals.values():
             available_for_validation.update(signals)
         available_for_validation.update(

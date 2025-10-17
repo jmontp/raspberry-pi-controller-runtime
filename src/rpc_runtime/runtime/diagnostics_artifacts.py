@@ -722,9 +722,16 @@ class DiagnosticsArtifacts:
         lines.append("")
 
         alerts: list[str] = []
-        for summary in sorted(sensor_summaries, key=lambda s: s["signal_name"]):
-            signal_name = summary["signal_name"]
-            sensor_alias = summary.get("sensor_alias")
+
+        def _signal_key(summary: Mapping[str, object]) -> str:
+            name = summary.get("signal_name")
+            return str(name)
+
+        for summary in sorted(sensor_summaries, key=_signal_key):
+            signal_name_obj = summary.get("signal_name")
+            signal_name = str(signal_name_obj) if signal_name_obj is not None else "unknown"
+            sensor_alias_obj = summary.get("sensor_alias")
+            sensor_alias = str(sensor_alias_obj) if sensor_alias_obj else None
             sensor_label = sensor_alias if sensor_alias else "unassigned sensor"
             lines.append(f"### {signal_name}")
             lines.append("")
@@ -732,9 +739,10 @@ class DiagnosticsArtifacts:
             lines.append("|--------|-------|")
             if sensor_alias:
                 lines.append(f"| Sensor | `{sensor_alias}` |")
-            coverage_pct = summary.get("coverage_pct")
+            coverage_pct_obj = summary.get("coverage_pct")
             total_samples = summary.get("total_samples")
-            if isinstance(coverage_pct, (int, float)):
+            if isinstance(coverage_pct_obj, (int, float)):
+                coverage_pct = float(coverage_pct_obj)
                 coverage_display = f"{coverage_pct:.1f}%"
                 if isinstance(total_samples, int):
                     coverage_display += f" ({total_samples})"
@@ -747,26 +755,50 @@ class DiagnosticsArtifacts:
             max_stale = summary.get("max_consecutive_stale")
             if isinstance(max_stale, int):
                 lines.append(f"| Max Stale Run (ticks) | {max_stale} |")
-            max_period = summary["max_period_s"]
+            max_period_obj = summary.get("max_period_s")
+            max_period = float(max_period_obj) if isinstance(max_period_obj, (int, float)) else None
             lines.append(f"| Longest Gap (s) | {_fmt(max_period)} |")
-            effective_rate = summary.get("effective_rate_hz")
+            effective_rate_obj = summary.get("effective_rate_hz")
+            effective_rate = float(effective_rate_obj) if isinstance(effective_rate_obj, (int, float)) else None
             lines.append(f"| Delivered Fresh Rate (Hz) | {_fmt(effective_rate)} |")
             lines.append("")
 
-            availability_plot = summary.get("availability_plot")
+            availability_plot_obj = summary.get("availability_plot")
+            availability_plot = (
+                availability_plot_obj if isinstance(availability_plot_obj, Path) else None
+            )
             if availability_plot is not None and availability_plot.exists():
                 rel_plot = availability_plot.relative_to(self.run_dir)
                 lines.append(f"![Data Availability Timeline]({rel_plot.as_posix()})")
                 lines.append("")
 
-            drop_intervals = summary.get("drop_intervals") or []
+            drop_intervals_obj = summary.get("drop_intervals")
+            drop_intervals: list[Sequence[object]] = []
+            if isinstance(drop_intervals_obj, Iterable) and not isinstance(
+                drop_intervals_obj, (str, bytes)
+            ):
+                for item in drop_intervals_obj:
+                    if isinstance(item, Sequence):
+                        drop_intervals.append(item)
             if drop_intervals:
                 threshold = getattr(summary.get("config"), "max_stale_time_s", None)
                 if threshold is not None:
                     lines.append(f"Dropout intervals (period > {threshold:.2f}s):")
                 else:
                     lines.append("Dropout intervals:")
-                for start, end, duration in drop_intervals:
+                for interval in drop_intervals:
+                    if not isinstance(interval, Sequence) or len(interval) != 3:
+                        continue
+                    start_obj, end_obj, duration_obj = interval
+                    if not isinstance(start_obj, (int, float)):
+                        continue
+                    if not isinstance(end_obj, (int, float)):
+                        continue
+                    if not isinstance(duration_obj, (int, float)):
+                        continue
+                    start = float(start_obj)
+                    end = float(end_obj)
+                    duration = float(duration_obj)
                     lines.append(f"- {start:.2f}s → {end:.2f}s (duration {duration:.2f}s)")
             lines.append("")
 

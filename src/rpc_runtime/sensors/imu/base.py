@@ -5,7 +5,7 @@ from __future__ import annotations
 import abc
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, Protocol, Tuple, cast
+from typing import Callable, Dict, Iterable, Protocol, Tuple, cast, runtime_checkable
 
 from ..base import BaseSensor, BaseSensorConfig, SensorStaleDataError
 
@@ -84,6 +84,7 @@ class IMUSample:
         return len(self.joint_angles_rad)
 
 
+@runtime_checkable
 class IMUResettable(Protocol):
     """Protocol for adapters that can re-align their orientation estimates."""
 
@@ -140,6 +141,7 @@ class BaseIMU(BaseSensor):
         """Validate IMU configuration and wire up shared sensor behaviour."""
         cfg = config or BaseIMUConfig()
         super().__init__(cfg)
+        self._imu_config: BaseIMUConfig = cast(BaseIMUConfig, super().config)
 
     @abc.abstractmethod
     def start(self) -> None:
@@ -174,22 +176,22 @@ class BaseIMU(BaseSensor):
     @property
     def config(self) -> BaseIMUConfig:
         """Active configuration for this IMU instance."""
-        return cast(BaseIMUConfig, super().config)
+        return self._imu_config
 
     @property
     def joint_names(self) -> tuple[str, ...]:
         """Tuple of joint names in the order emitted by :meth:`read`."""
-        return self._config.joint_names
+        return self._imu_config.joint_names
 
     @property
     def segment_names(self) -> tuple[str, ...]:
         """Tuple of segment names in the order emitted by :meth:`read`."""
-        return self._config.segment_names
+        return self._imu_config.segment_names
 
     @property
     def port_map(self) -> dict[str, str]:
         """Mapping of segment name to underlying transport identifier/port."""
-        return self._config.port_map
+        return self._imu_config.port_map
 
     @property
     def joint_angle_conventions(self) -> dict[str, str]:
@@ -336,7 +338,7 @@ class BaseIMU(BaseSensor):
             return None
 
     @classmethod
-    def _validate_config(cls, config: BaseIMUConfig) -> BaseIMUConfig:
+    def _validate_config(cls, config: BaseSensorConfig) -> BaseSensorConfig:
         """Validate and normalise a `BaseIMUConfig` instance.
 
         Args:
@@ -346,6 +348,9 @@ class BaseIMU(BaseSensor):
             ValueError: If the config omits joints, segments, or required port
                 mappings, or if duplicates are present.
         """
+        if not isinstance(config, BaseIMUConfig):
+            raise TypeError("BaseIMU requires a BaseIMUConfig instance")
+
         config = cast(BaseIMUConfig, super()._validate_config(config))
         joint_names = tuple(config.joint_names)
         if not joint_names:
@@ -417,7 +422,14 @@ class BaseIMU(BaseSensor):
     # Staleness management
     # ------------------------------------------------------------------
 
-    def _handle_sample(self, sample: IMUSample | None, *, fresh: bool) -> IMUSample:
+    def _handle_sample(
+        self,
+        sample: IMUSample | None,
+        *,
+        fresh: bool,
+        fallback_factory: Callable[[float], object] | None = None,
+    ) -> IMUSample:
+        """Normalise stale handling for IMU samples."""
 
         def fallback(timestamp: float) -> IMUSample:
             joints = len(self.joint_names)
@@ -430,7 +442,9 @@ class BaseIMU(BaseSensor):
                 segment_velocities_rad_s=tuple(0.0 for _ in range(segments)),
             )
 
+        factory: Callable[[float], object] = fallback_factory or fallback
         try:
-            return super()._handle_sample(sample, fresh=fresh, fallback_factory=fallback)
+            result = super()._handle_sample(sample, fresh=fresh, fallback_factory=factory)
         except SensorStaleDataError as exc:
             raise IMUStaleDataError(str(exc)) from exc
+        return cast(IMUSample, result)

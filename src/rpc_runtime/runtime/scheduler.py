@@ -6,7 +6,7 @@ import abc
 import contextlib
 import time
 from dataclasses import dataclass
-from typing import Callable, Iterator
+from typing import Callable, Iterable, Iterator, Protocol
 
 
 class BaseScheduler(abc.ABC):
@@ -58,11 +58,11 @@ class SoftRealtimeScheduler(BaseScheduler):
     """Wrap a soft-realtime loop implementation behind the scheduler interface."""
 
     frequency_hz: float
-    loop_class: Callable[..., object]
+    loop_class: Callable[..., "SoftRealtimeLoop"]
 
     def __post_init__(self) -> None:
         """Initialise the loop placeholder prior to lazy construction."""
-        self._loop = None
+        self._loop: SoftRealtimeLoop | None = None
 
     def ticks(self) -> Iterator[float]:
         """Yield elapsed times from the underlying soft-realtime implementation."""
@@ -82,3 +82,18 @@ class SoftRealtimeScheduler(BaseScheduler):
             loop.stop()
         self._loop = None
 
+
+class SoftRealtimeLoop(Protocol, Iterable[float]):
+    """Protocol describing the soft-realtime loop contract consumed by the scheduler."""
+
+    def __enter__(self) -> "SoftRealtimeLoop":
+        ...
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        ...
+
+    def __iter__(self) -> Iterator[float]:
+        ...
+
+    def stop(self) -> None:  # pragma: no cover - optional for some implementations
+        ...

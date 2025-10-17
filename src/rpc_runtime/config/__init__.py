@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from os import PathLike
+from os import PathLike, fsdecode, fspath
+from pathlib import Path
 from typing import Union
 
 from rpc_runtime.runtime.wrangler import HardwareAvailabilityError
@@ -25,7 +26,8 @@ def load_components_from(
     path: Union[str, bytes, PathLike[str], PathLike[bytes]]
 ) -> RuntimeComponents:
     """Convenience wrapper mirroring legacy API name."""
-    return load_components(path)
+    normalized = fsdecode(fspath(path))
+    return load_components(Path(normalized))
 
 
 __all__ = [

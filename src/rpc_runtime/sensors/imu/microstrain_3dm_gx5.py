@@ -270,7 +270,7 @@ class Microstrain3DMGX5IMU(BaseIMU):
         if value_a is None and value_b is None:
             return 0.0
         if value_a is None:
-            return -float(value_b)
+            return -float(value_b) if value_b is not None else 0.0
         if value_b is None:
             return float(value_a)
         return float(value_a) - float(value_b)

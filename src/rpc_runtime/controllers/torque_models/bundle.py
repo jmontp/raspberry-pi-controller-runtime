@@ -8,16 +8,6 @@ from typing import Dict, Iterable, Mapping
 
 from .base import TorqueModel
 
-try:  # pragma: no cover - optional imports resolved lazily
-    from .onnx_runtime import ONNXTorqueModel
-except Exception:  # pragma: no cover
-    ONNXTorqueModel = None  # type: ignore[assignment]
-
-try:  # pragma: no cover - optional imports resolved lazily
-    from .torchscript import TorchscriptTorqueModel
-except Exception:  # pragma: no cover
-    TorchscriptTorqueModel = None  # type: ignore[assignment]
-
 
 class BundleTorqueModel(TorqueModel):
     """Load an exported torque bundle and map outputs to runtime joints."""
@@ -104,13 +94,17 @@ class BundleTorqueModel(TorqueModel):
     def _build_backend(self) -> TorqueModel:
         format_name = str(self._metadata.get("format", "")).lower()
         if format_name == "onnx":
-            if ONNXTorqueModel is None:  # pragma: no cover - runtime check
-                raise RuntimeError("onnxruntime is not available for ONNX bundles")
-            return ONNXTorqueModel(self._path)
+            try:  # pragma: no cover - optional dependency
+                from .onnx_runtime import ONNXTorqueModel as OnnxTorqueModel
+            except Exception as exc:
+                raise RuntimeError("onnxruntime is not available for ONNX bundles") from exc
+            return OnnxTorqueModel(self._path)
         if format_name == "torchscript":
-            if TorchscriptTorqueModel is None:  # pragma: no cover - runtime check
-                raise RuntimeError("PyTorch is not available for TorchScript bundles")
-            return TorchscriptTorqueModel(self._path)
+            try:  # pragma: no cover - optional dependency
+                from .torchscript import TorchscriptTorqueModel as TorchTorqueModel
+            except Exception as exc:
+                raise RuntimeError("PyTorch is not available for TorchScript bundles") from exc
+            return TorchTorqueModel(self._path)
         raise ValueError(f"Unsupported bundle format '{format_name}'")
 
     def expected_features(self) -> Iterable[str]:

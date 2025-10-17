@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from rpc_runtime.actuators.base import BaseActuator
 from rpc_runtime.controllers.pi_controller import PIController, PIControllerConfig

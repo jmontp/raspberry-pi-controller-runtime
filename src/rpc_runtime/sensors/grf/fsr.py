@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import cast
 
 from .base import BaseVerticalGRF, BaseVerticalGRFConfig, VerticalGRFSample
 
@@ -13,20 +14,23 @@ except ImportError:  # noqa: F401 pragma: no cover - optional
     FSRThread = None
 
 
+DEFAULT_FSR_CHANNEL_NAMES: tuple[str, ...] = (
+    "hallux",
+    "toes",
+    "met1",
+    "met3",
+    "met5",
+    "arch",
+    "heel_medial",
+    "heel_lateral",
+)
+
+
 @dataclass(slots=True)
 class BluetoothFSRConfig(BaseVerticalGRFConfig):
     """Configuration options for the Bluetooth FSR adapter."""
 
-    channel_names: tuple[str, ...] = (
-        "hallux",
-        "toes",
-        "met1",
-        "met3",
-        "met5",
-        "arch",
-        "heel_medial",
-        "heel_lateral",
-    )
+    channel_names: tuple[str, ...] = DEFAULT_FSR_CHANNEL_NAMES
     address: str = ""
     sampling_rate: str = "100Hz"
     max_history: int = 500
@@ -36,7 +40,7 @@ class BluetoothFSRConfig(BaseVerticalGRFConfig):
 class BluetoothFSR(BaseVerticalGRF):
     """Wrap the legacy Bluetooth FSR thread with the abstract interface."""
 
-    CHANNEL_NAMES = BluetoothFSRConfig.channel_names
+    CHANNEL_NAMES = DEFAULT_FSR_CHANNEL_NAMES
 
     def __init__(self, config: BluetoothFSRConfig | None = None):
         """Create the adapter.
@@ -104,3 +108,8 @@ class BluetoothFSR(BaseVerticalGRF):
                 return
             last = self._thread.fsr_history[-1]
             self._baseline = [float(last["fsr"][name]) for name in self.channel_names]
+
+    @property
+    def config(self) -> BluetoothFSRConfig:
+        """Return the strongly-typed configuration for this adapter."""
+        return cast(BluetoothFSRConfig, super().config)
