@@ -69,7 +69,6 @@ class SignalRoute:
 
     name: str
     provider: str | None
-    default: float = 0.0
 
     @property
     def derived(self) -> bool:

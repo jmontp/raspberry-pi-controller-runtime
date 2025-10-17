@@ -29,33 +29,33 @@ def _mock_imu_sample() -> IMUSample:
     )
 
 
-def test_wrangler_optional_signal_zero_fill() -> None:
-    """Optional channels should fall back to the declared default value."""
+def test_wrangler_optional_signal_absent() -> None:
+    """Optional channels missing from hardware do not receive synthetic defaults."""
     schema = InputSchema(
         name="test",
         signals=(
             SchemaSignal(name="knee_flexion_angle_ipsi_rad", required=True),
-            SchemaSignal(name="vertical_grf_ipsi_N", required=False, default=0.0),
+            SchemaSignal(name="vertical_grf_ipsi_N", required=False),
         ),
     )
     routes = (
         SignalRoute(
             name="knee_flexion_angle_ipsi_rad",
             provider="imu_mock",
-            default=0.0,
         ),
         SignalRoute(
             name="vertical_grf_ipsi_N",
             provider="vertical_grf_mock",
-            default=0.0,
         ),
     )
     imu = MockIMU(samples=[_mock_imu_sample()], loop=False)
     wrangler = DataWrangler(schema, routes, sensors={"imu_mock": imu})
     with wrangler:
-        view, _, _ = wrangler.get_sensor_data()
+        view, meta, _ = wrangler.get_sensor_data()
     assert view["knee_flexion_angle_ipsi_rad"] == pytest.approx(0.1)
-    assert view["vertical_grf_ipsi_N"] == 0.0
+    assert "vertical_grf_ipsi_N" not in view.as_dict()
+    assert meta.optional_presence["vertical_grf_ipsi_N"] is False
+    assert "vertical_grf_ipsi_N" in meta.missing_optional
 
 
 def test_wrangler_missing_required_sensor_raises() -> None:
@@ -71,12 +71,10 @@ def test_wrangler_missing_required_sensor_raises() -> None:
         SignalRoute(
             name="knee_flexion_angle_ipsi_rad",
             provider="imu_mock",
-            default=0.0,
         ),
         SignalRoute(
             name="vertical_grf_ipsi_N",
             provider="vertical_grf_mock",
-            default=0.0,
         ),
     )
     imu = MockIMU(samples=[_mock_imu_sample()], loop=False)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import abc
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, Protocol, Tuple, cast, runtime_checkable
+from typing import Callable, Dict, Iterable, Mapping, Protocol, Tuple, cast, runtime_checkable
 
 from ..base import BaseSensor, BaseSensorConfig, SensorStaleDataError
 
@@ -53,6 +53,52 @@ DEFAULT_PORT_MAP: Dict[str, str] = {
     "thigh_l": "/dev/ttyIMU_thigh_l",
     "shank_l": "/dev/ttyIMU_shank_l",
     "foot_l": "/dev/ttyIMU_foot_l",
+}
+
+CANONICAL_JOINT_ANGLES: Dict[str, str] = {
+    "hip_flexion_angle_ipsi_rad": "hip_r",
+    "knee_flexion_angle_ipsi_rad": "knee_r",
+    "ankle_dorsiflexion_angle_ipsi_rad": "ankle_r",
+    "hip_flexion_angle_contra_rad": "hip_l",
+    "knee_flexion_angle_contra_rad": "knee_l",
+    "ankle_dorsiflexion_angle_contra_rad": "ankle_l",
+}
+
+CANONICAL_JOINT_VELOCITIES: Dict[str, str] = {
+    "hip_flexion_velocity_ipsi_rad_s": "hip_r",
+    "knee_flexion_velocity_ipsi_rad_s": "knee_r",
+    "ankle_dorsiflexion_velocity_ipsi_rad_s": "ankle_r",
+    "hip_flexion_velocity_contra_rad_s": "hip_l",
+    "knee_flexion_velocity_contra_rad_s": "knee_l",
+    "ankle_dorsiflexion_velocity_contra_rad_s": "ankle_l",
+}
+
+CANONICAL_SEGMENT_ANGLES: Dict[str, str] = {
+    "thigh_sagittal_angle_ipsi_rad": "thigh_r",
+    "shank_sagittal_angle_ipsi_rad": "shank_r",
+    "foot_sagittal_angle_ipsi_rad": "foot_r",
+    "thigh_sagittal_angle_contra_rad": "thigh_l",
+    "shank_sagittal_angle_contra_rad": "shank_l",
+    "foot_sagittal_angle_contra_rad": "foot_l",
+}
+
+CANONICAL_SEGMENT_VELOCITIES: Dict[str, str] = {
+    "thigh_sagittal_velocity_ipsi_rad_s": "thigh_r",
+    "shank_sagittal_velocity_ipsi_rad_s": "shank_r",
+    "foot_sagittal_velocity_ipsi_rad_s": "foot_r",
+    "thigh_sagittal_velocity_contra_rad_s": "thigh_l",
+    "shank_sagittal_velocity_contra_rad_s": "shank_l",
+    "foot_sagittal_velocity_contra_rad_s": "foot_l",
+}
+
+LEGACY_JOINT_ANGLE_INDICES: Dict[str, int] = {
+    "knee_flexion_angle_ipsi_rad": 0,
+    "ankle_dorsiflexion_angle_ipsi_rad": 1,
+}
+
+LEGACY_JOINT_VELOCITY_INDICES: Dict[str, int] = {
+    "knee_flexion_velocity_ipsi_rad_s": 0,
+    "ankle_dorsiflexion_velocity_ipsi_rad_s": 1,
 }
 
 
@@ -126,6 +172,19 @@ class BaseIMU(BaseSensor):
     joint and segment representation expected by the controller.
     """
 
+    DERIVED_SIGNALS: Dict[str, tuple[tuple[str, ...], Callable[[Mapping[str, float]], float]]] = {
+        "knee_flexion_angle_ipsi_rad": (
+            ("thigh_sagittal_angle_ipsi_rad", "shank_sagittal_angle_ipsi_rad"),
+            lambda measured: measured["thigh_sagittal_angle_ipsi_rad"]
+            - measured["shank_sagittal_angle_ipsi_rad"],
+        ),
+        "knee_flexion_angle_contra_rad": (
+            ("thigh_sagittal_angle_contra_rad", "shank_sagittal_angle_contra_rad"),
+            lambda measured: measured["thigh_sagittal_angle_contra_rad"]
+            - measured["shank_sagittal_angle_contra_rad"],
+        ),
+    }
+
     supports_batch: bool = False
     #: Canonical joint names (ordered) that the IMU reports. Sub-classes should
     #: override or expose instance-specific values when available.
@@ -142,6 +201,7 @@ class BaseIMU(BaseSensor):
         cfg = config or BaseIMUConfig()
         super().__init__(cfg)
         self._imu_config: BaseIMUConfig = cast(BaseIMUConfig, super().config)
+        self._latest_measured: Dict[str, float] = {}
 
     @abc.abstractmethod
     def start(self) -> None:
@@ -158,12 +218,84 @@ class BaseIMU(BaseSensor):
     def read_signals(self, signals: Iterable[str]) -> tuple[IMUSample, dict[str, float]]:
         """Return the latest sample along with selected canonical signals."""
         sample = self.read()
+        measured = self._collect_direct_signals(sample)
+        derived = self._collect_derived_signals(measured)
+        canonical = {**measured, **derived}
+        self._latest_measured = measured
         values: dict[str, float] = {}
         for name in signals:
-            value = self._map_signal(sample, name)
+            value = canonical.get(name)
             if value is not None:
                 values[name] = value
         return sample, values
+
+    def _collect_direct_signals(self, sample: IMUSample) -> Dict[str, float]:
+        """Extract canonical signals available directly from the IMU sample."""
+        measured: Dict[str, float] = {}
+        joint_angle_data = getattr(sample, "joint_angles_rad", ())
+        joint_velocity_data = getattr(sample, "joint_velocities_rad_s", ())
+        expected_joint_len = len(self.joint_names)
+
+        for canonical, joint_name in CANONICAL_JOINT_ANGLES.items():
+            value = None
+            if expected_joint_len and len(joint_angle_data) == expected_joint_len:
+                value = self._resolve_named_joint(sample, "joint_angles_rad", joint_name)
+            if value is None:
+                legacy_index = LEGACY_JOINT_ANGLE_INDICES.get(canonical)
+                if legacy_index is not None:
+                    value = self._resolve_joint_attribute(sample, "joint_angles_rad", legacy_index)
+            if value is not None:
+                measured[canonical] = value
+
+        for canonical, joint_name in CANONICAL_JOINT_VELOCITIES.items():
+            value = None
+            if expected_joint_len and len(joint_velocity_data) == expected_joint_len:
+                value = self._resolve_named_joint(
+                    sample,
+                    "joint_velocities_rad_s",
+                    joint_name,
+                )
+            if value is None:
+                legacy_index = LEGACY_JOINT_VELOCITY_INDICES.get(canonical)
+                if legacy_index is not None:
+                    value = self._resolve_joint_attribute(
+                        sample, "joint_velocities_rad_s", legacy_index
+                    )
+            if value is not None:
+                measured[canonical] = value
+
+        for canonical, segment_name in CANONICAL_SEGMENT_ANGLES.items():
+            value = self._resolve_named_segment(sample, "segment_angles_rad", segment_name)
+            if value is not None:
+                measured[canonical] = value
+
+        for canonical, segment_name in CANONICAL_SEGMENT_VELOCITIES.items():
+            value = self._resolve_named_segment(sample, "segment_velocities_rad_s", segment_name)
+            if value is not None:
+                measured[canonical] = value
+
+        return measured
+
+    def _collect_derived_signals(self, measured: Mapping[str, float]) -> Dict[str, float]:
+        """Compute derived canonical signals from measured channels."""
+        derived: Dict[str, float] = {}
+        for name, (dependencies, compute) in self.DERIVED_SIGNALS.items():
+            if name in measured:
+                continue
+            if not all(dep in measured for dep in dependencies):
+                continue
+            try:
+                value = compute(measured)
+            except Exception:  # pragma: no cover - defensive guard
+                LOGGER.warning("Failed to derive IMU signal '%s'", name, exc_info=True)
+                continue
+            try:
+                derived[name] = float(value)
+            except (TypeError, ValueError):
+                LOGGER.warning(
+                    "Derived IMU signal '%s' produced non-numeric value '%s'", name, value
+                )
+        return derived
 
     def reset(self) -> None:
         """Optional method to zero orientation and velocity estimates."""
@@ -206,87 +338,6 @@ class BaseIMU(BaseSensor):
         defaults = {**DEFAULT_SEGMENT_ANGLE_CONVENTIONS, **self.SEGMENT_ANGLE_CONVENTIONS}
         fallback = "Positive rotation counter-clockwise in the sagittal plane."
         return {name: defaults.get(name, fallback) for name in self.segment_names}
-
-    # ------------------------------------------------------------------
-    # Canonical signal helpers
-    # ------------------------------------------------------------------
-
-    def _map_signal(self, sample: IMUSample, name: str) -> float | None:
-        """Translate canonical signal names into IMU sample values."""
-        joint_angle_names = {
-            "hip_flexion_angle_ipsi_rad": "hip_r",
-            "knee_flexion_angle_ipsi_rad": "knee_r",
-            "ankle_dorsiflexion_angle_ipsi_rad": "ankle_r",
-            "hip_flexion_angle_contra_rad": "hip_l",
-            "knee_flexion_angle_contra_rad": "knee_l",
-            "ankle_dorsiflexion_angle_contra_rad": "ankle_l",
-        }
-        joint_velocity_names = {
-            "hip_flexion_velocity_ipsi_rad_s": "hip_r",
-            "knee_flexion_velocity_ipsi_rad_s": "knee_r",
-            "ankle_dorsiflexion_velocity_ipsi_rad_s": "ankle_r",
-            "hip_flexion_velocity_contra_rad_s": "hip_l",
-            "knee_flexion_velocity_contra_rad_s": "knee_l",
-            "ankle_dorsiflexion_velocity_contra_rad_s": "ankle_l",
-        }
-        segment_angle_names = {
-            "thigh_sagittal_angle_ipsi_rad": "thigh_r",
-            "shank_sagittal_angle_ipsi_rad": "shank_r",
-            "foot_sagittal_angle_ipsi_rad": "foot_r",
-            "thigh_sagittal_angle_contra_rad": "thigh_l",
-            "shank_sagittal_angle_contra_rad": "shank_l",
-            "foot_sagittal_angle_contra_rad": "foot_l",
-        }
-        segment_velocity_names = {
-            "thigh_sagittal_velocity_ipsi_rad_s": "thigh_r",
-            "shank_sagittal_velocity_ipsi_rad_s": "shank_r",
-            "foot_sagittal_velocity_ipsi_rad_s": "foot_r",
-            "thigh_sagittal_velocity_contra_rad_s": "thigh_l",
-            "shank_sagittal_velocity_contra_rad_s": "shank_l",
-            "foot_sagittal_velocity_contra_rad_s": "foot_l",
-        }
-        legacy_joint_angle_indices = {
-            "knee_flexion_angle_ipsi_rad": 0,
-            "ankle_dorsiflexion_angle_ipsi_rad": 1,
-        }
-        legacy_joint_velocity_indices = {
-            "knee_flexion_velocity_ipsi_rad_s": 0,
-            "ankle_dorsiflexion_velocity_ipsi_rad_s": 1,
-        }
-        joint_angle_data = getattr(sample, "joint_angles_rad", ())
-        joint_velocity_data = getattr(sample, "joint_velocities_rad_s", ())
-        expected_joint_len = len(self.joint_names)
-        if name in joint_angle_names:
-            value = None
-            if len(joint_angle_data) == expected_joint_len and expected_joint_len:
-                value = self._resolve_named_joint(sample, "joint_angles_rad", joint_angle_names[name])
-            if value is not None:
-                return value
-            idx = legacy_joint_angle_indices.get(name)
-            if idx is not None:
-                return self._resolve_joint_attribute(sample, "joint_angles_rad", idx)
-        if name in joint_velocity_names:
-            value = None
-            if len(joint_velocity_data) == expected_joint_len and expected_joint_len:
-                value = self._resolve_named_joint(
-                    sample,
-                    "joint_velocities_rad_s",
-                    joint_velocity_names[name],
-                )
-            if value is not None:
-                return value
-            idx = legacy_joint_velocity_indices.get(name)
-            if idx is not None:
-                return self._resolve_joint_attribute(sample, "joint_velocities_rad_s", idx)
-        if name in segment_angle_names:
-            return self._resolve_named_segment(sample, "segment_angles_rad", segment_angle_names[name])
-        if name in segment_velocity_names:
-            return self._resolve_named_segment(
-                sample,
-                "segment_velocities_rad_s",
-                segment_velocity_names[name],
-            )
-        return None
 
     def _resolve_joint_attribute(
         self,

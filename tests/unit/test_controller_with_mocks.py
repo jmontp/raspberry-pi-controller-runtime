@@ -46,7 +46,7 @@ def test_controller_with_mock_devices() -> None:
             SchemaSignal(name="knee_flexion_velocity_ipsi_rad_s"),
             SchemaSignal(name="ankle_dorsiflexion_angle_ipsi_rad"),
             SchemaSignal(name="ankle_dorsiflexion_velocity_ipsi_rad_s"),
-            SchemaSignal(name="vertical_grf_ipsi_N", required=False, default=0.0),
+            SchemaSignal(name="vertical_grf_ipsi_N", required=False),
         ),
     )
     controller = PIController(
@@ -55,11 +55,11 @@ def test_controller_with_mock_devices() -> None:
         input_schema=schema,
     )
     routes = (
-        SignalRoute(name="knee_flexion_angle_ipsi_rad", provider="imu_mock", default=0.0),
-        SignalRoute(name="knee_flexion_velocity_ipsi_rad_s", provider="imu_mock", default=0.0),
-        SignalRoute(name="ankle_dorsiflexion_angle_ipsi_rad", provider="imu_mock", default=0.0),
-        SignalRoute(name="ankle_dorsiflexion_velocity_ipsi_rad_s", provider="imu_mock", default=0.0),
-        SignalRoute(name="vertical_grf_ipsi_N", provider="vertical_grf_mock", default=0.0),
+        SignalRoute(name="knee_flexion_angle_ipsi_rad", provider="imu_mock"),
+        SignalRoute(name="knee_flexion_velocity_ipsi_rad_s", provider="imu_mock"),
+        SignalRoute(name="ankle_dorsiflexion_angle_ipsi_rad", provider="imu_mock"),
+        SignalRoute(name="ankle_dorsiflexion_velocity_ipsi_rad_s", provider="imu_mock"),
+        SignalRoute(name="vertical_grf_ipsi_N", provider="vertical_grf_mock"),
     )
     loop = RuntimeLoop(
         RuntimeLoopConfig(frequency_hz=100.0),

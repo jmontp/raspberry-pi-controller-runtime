@@ -123,27 +123,17 @@ def _load_structured_profile(
                     f"'input_signals' entry #{idx} references unknown sensor alias '{provider}'"
                 )
         required_flag = entry.get("required")
-        raw_default = entry.get("default")
-        required = bool(required_flag) if required_flag is not None else raw_default is None
-        default_value = raw_default if raw_default is not None else 0.0
-        try:
-            default_numeric = float(default_value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"'input_signals' entry '{signal_name}' has invalid default '{default_value}'"
-            ) from exc
+        required = bool(required_flag) if required_flag is not None else True
         input_schema_signals.append(
             SchemaSignal(
                 name=str(signal_name),
                 required=required,
-                default=default_numeric,
             )
         )
         signal_routes.append(
             SignalRoute(
                 name=signal_name,
                 provider=provider,
-                default=default_numeric,
             )
         )
         if provider is not None:

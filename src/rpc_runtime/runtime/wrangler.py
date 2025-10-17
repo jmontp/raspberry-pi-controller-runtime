@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import types
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, Iterable, Mapping, MutableMapping, Sequence
+from typing import TYPE_CHECKING, Dict, Iterable, Mapping, Sequence
 
 from ..sensors.base import BaseSensor, SensorStaleDataError
 from ..sensors.combinators import ControlInputs
@@ -57,7 +57,6 @@ class SchemaSignal:
 
     name: str
     required: bool = True
-    default: float = 0.0
 
 
 @dataclass(slots=True)
@@ -112,7 +111,6 @@ class DataWrangler:
         self._diagnostics = diagnostics_sink
 
         self._ordered_names = [signal.name for signal in self._schema.signals]
-        self._defaults = {signal.name: float(signal.default) for signal in self._schema.signals}
         self._required_names = self._schema.required_signals()
         self._optional_names = {
             signal.name for signal in self._schema.signals if not signal.required
@@ -133,20 +131,6 @@ class DataWrangler:
         self._provider_signals = {
             alias: tuple(signals) for alias, signals in provider_signals.items()
         }
-        self._optional_tracked_names = {
-            signal
-            for signals in self._provider_signals.values()
-            for signal in signals
-            if signal in self._optional_names
-        }
-        self._optional_missing_static = {
-            route.name
-            for route in self._routes
-            if route.name in self._optional_names
-            and route.provider is not None
-            and route.provider not in self._sensors
-        }
-
         available_for_validation: set[str] = set()
         for signals in self._provider_signals.values():
             available_for_validation.update(signals)
@@ -157,14 +141,6 @@ class DataWrangler:
         )
         self._schema.validate_signals(available_for_validation)
 
-        self._primary_provider = next(
-            (route.provider for route in self._routes if route.provider is not None),
-            None,
-        )
-        self._feature_buffer: Dict[str, float] = {
-            name: self._defaults[name] for name in self._ordered_names
-        }
-        self._feature_view = FeatureView(types.MappingProxyType(self._feature_buffer))
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -191,7 +167,6 @@ class DataWrangler:
         """Start all configured sensors."""
         for sensor in self._sensors.values():
             sensor.start()
-        self._feature_buffer.update(self._defaults)
 
     def stop(self) -> None:
         """Stop all configured sensors."""
@@ -204,13 +179,10 @@ class DataWrangler:
 
     def get_sensor_data(self) -> tuple[FeatureView, FeatureMetadata, ControlInputs]:
         """Fetch the latest canonical features and metadata."""
-        feature_values: MutableMapping[str, float] = self._feature_buffer
-        feature_values.update(self._defaults)
+        feature_values: Dict[str, float] = {}
         samples: Dict[str, object] = {}
-        missing_required: list[str] = []
-        optional_presence_names = self._optional_tracked_names | self._optional_missing_static
-        missing_optional: set[str] = set(self._optional_missing_static)
-        optional_presence: Dict[str, bool] = dict.fromkeys(optional_presence_names, False)
+        missing_required: set[str] = set()
+        optional_presence: Dict[str, bool] = dict.fromkeys(self._optional_names, False)
         primary_timestamp: float | None = None
 
         for alias, signals in self._provider_signals.items():
@@ -228,12 +200,15 @@ class DataWrangler:
                 value = values.get(signal)
                 if value is None:
                     if signal in self._required_names:
-                        missing_required.append(signal)
+                        missing_required.add(signal)
                     continue
                 feature_values[signal] = float(value)
                 if signal in optional_presence:
                     optional_presence[signal] = True
-                missing_optional.discard(signal)
+
+        for name in self._required_names:
+            if name not in feature_values:
+                missing_required.add(name)
 
         if missing_required:
             raise SensorStaleDataError(
@@ -241,13 +216,15 @@ class DataWrangler:
                 + ", ".join(sorted(set(missing_required)))
             )
 
-        frozen = self._feature_view
+        frozen = FeatureView(types.MappingProxyType(dict(feature_values)))
         timestamp = primary_timestamp if primary_timestamp is not None else time.monotonic()
         meta = FeatureMetadata(
             timestamp=timestamp,
             stale=False,
             optional_presence=dict(optional_presence),
-            missing_optional=tuple(sorted(missing_optional)),
+            missing_optional=tuple(
+                sorted(name for name, present in optional_presence.items() if not present)
+            ),
         )
         control_inputs = ControlInputs(samples=samples)
         return frozen, meta, control_inputs
