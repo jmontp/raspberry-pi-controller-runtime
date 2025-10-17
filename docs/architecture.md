@@ -127,6 +127,7 @@ across mock and hardware-backed deployments.
   failures raise `HardwareAvailabilityError`.
 - `probe()` — performs lightweight readiness checks (e.g., ensure `/dev`
 - `start()` — opens all configured sensors, performs warm-up/calibration, and
+  blocks until each sensor's startup watchdog reports fresh data (or times out).
 - `get_sensor_data()` — asks each sensor for its subscribed signals, stores the
   responses in the canonical buffer order, and returns a read-only view along
   with metadata (timestamp, stale flag, optional coverage map). Missing required
@@ -179,7 +180,8 @@ The runtime loop does not maintain an explicit state machine. Execution is
 linear:
 
 1. Build the DataWrangler plan and probe hardware readiness.
-2. Start sensors and actuator, then enter the scheduler loop.
+2. Start sensors (waiting for startup watchdogs to report fresh data) and the
+   actuator, then enter the scheduler loop.
 3. Each tick: read sensor data, compute torques, clamp via safety, command the
    actuator.
 4. If any step raises (sensor stale, controller fault, actuator error), catch
@@ -290,7 +292,8 @@ sequenceDiagram
     Runtime->>Diagnostics: configure(log_root)
     Runtime->>Safety: configure(limits, defaults)
     Runtime->>Actuator: start()
-    Runtime->>SensorType: start() (zero and stream)
+    Wrangler->>SensorType: start()
+    Wrangler->>SensorType: await_startup_sample(required signals)
 ```
 
 **Validation guarantees**
@@ -301,6 +304,8 @@ sequenceDiagram
   without injecting placeholder values.
 - Derived signals express their dependencies explicitly, so the plan fails early
   if prerequisites are unavailable.
+- Startup watchdogs ensure sensors deliver at least one fresh sample before the
+  runtime loop begins; unresolved sensors cause startup to fail fast.
 - Probe failures bubble back up before the runtime loop starts, allowing the
   operator to fix hardware or choose a different profile before running.
 
@@ -349,6 +354,7 @@ classDiagram
       +__exit__()
       +start()*
       +stop()*
+      +await_startup_sample(signals, timeout_s?)
       +read(): CanonicalSample*
     }
     class SensorHardwareDriver {
@@ -393,6 +399,13 @@ Sensor types (e.g., `BaseIMU`) maintain two views of their data:
   channels and returns only the canonical result. Derived expressions remain
   sensor-owned, so the wrangler never needs to understand how features are
   composed or which hardware devices participate.
+- Sensors default to a *fallback* fault strategy so transient dropouts reuse the
+  last valid measurement. Modalities that need stricter behaviour (e.g., fail-fast)
+  can override their configuration to opt into `raise` or `warn` instead.
+- During `start()`, each sensor runs a **startup watchdog**: `await_startup_sample()`
+  blocks until a fresh sample satisfies the requested canonical signals (or a
+  configurable timeout expires). The DataWrangler invokes this hook after calling
+  `start()` so the runtime loop never begins with empty buffers.
 
 If a sensor cannot supply a required canonical signal for a tick—because a raw
 channel is missing or a derivation fails—it raises `SensorStaleDataError`. No
