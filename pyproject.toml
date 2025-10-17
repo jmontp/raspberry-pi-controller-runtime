@@ -16,7 +16,6 @@ dependencies = [
   "onnxruntime>=1.17",
   "torch>=2.3",
   "bleak>=0.21",
-  "osl @ git+https://github.com/opensourceleg/osl",
   "pyyaml>=6.0",
 ]
 
@@ -27,6 +26,9 @@ dev = [
   "mypy>=1.8",
   "ruff>=0.3.0",
   "types-PyYAML",
+]
+hardware = [
+  "osl @ git+https://github.com/opensourceleg/osl",
 ]
 
 [tool.setuptools]
