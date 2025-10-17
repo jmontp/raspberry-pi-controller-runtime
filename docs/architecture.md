@@ -65,10 +65,12 @@ flowchart TD
 
 DataWrangler initialises once, so the runtime loop simply requests the next
 packet each tick. Sensors emit canonical values; the wrangler places them into
-the buffer following the controller-defined order. Signals without a hardware
-provider (derived values) retain their schema defaults until software layers
-populate them explicitly. The runtime orchestrator logs each feature/torque
-snapshot before applying the safety-clamped command to the actuator.
+the buffer following the controller-defined order. When a canonical feature is
+declared as derived (no hardware provider), the responsible sensor computes it
+from its measured channels; if that calculation fails, the tick faults
+immediately rather than falling back to synthetic data. The runtime
+orchestrator logs each feature/torque snapshot before applying the
+safety-clamped command to the actuator.
 
 ## Profile configuration schema
 
@@ -81,16 +83,15 @@ The top-level sections are `profile`, `input_signals`, `output_signals`,
 An ordered list of mappings describing each canonical feature exposed to the
 controller. Supported keys per entry:
 
-| key        | type    | required | default | description |
-|------------|---------|----------|---------|-------------|
-| `name`     | string  | yes      | –       | Canonical signal identifier (e.g., `knee_flexion_angle_ipsi_rad`). |
-| `hardware` | string  | no       | `null`  | Sensor alias from `hardware.sensors`; omit for derived/software signals. |
-| `required` | bool    | no       | `true`  | Marks whether the runtime must receive this signal each tick. Optional signals fall back to `default`. |
-| `default`  | number  | no       | `0.0`   | Initial value used when the signal is absent (for optional/derived features). |
+| key        | type    | required | description |
+|------------|---------|----------|-------------|
+| `name`     | string  | yes      | Canonical signal identifier (e.g., `knee_flexion_angle_ipsi_rad`). |
+| `hardware` | string  | no       | Sensor alias from `hardware.sensors`; omit for derived/software signals. |
+| `required` | bool    | no       | Marks whether the runtime must receive this signal each tick. Optional signals may be absent, but no synthetic defaults are applied. |
 
-Setting `required: false` and providing a `default` allows profiles to declare
-features consumed by the torque model that are not produced by mock hardware
-during development while keeping the schema consistent with hardware builds.
+Optional inputs exist to surface best-effort telemetry (e.g., a gait phase
+estimator) without aborting the run. When an optional signal is missing for a
+tick, diagnostics record the gap; the value is not silently substituted.
 
 ### `output_signals`
 
@@ -121,17 +122,17 @@ across mock and hardware-backed deployments.
 - `DataWrangler(required_inputs, signal_routes, sensors, *, diagnostics_sink=None)` —
   constructor wires in the ordered signal routes declared in the profile,
   verifies that every required signal has a backing sensor, and prepares
-  provider→signal lookup tables. Signals that omit a provider are treated as
-  derived and initialised to their schema default. Validation failures raise
-  `HardwareAvailabilityError`.
+  provider→signal lookup tables. Signals that omit a provider are delegated to
+  the owning sensor, which derives them from its measured channels. Validation
+  failures raise `HardwareAvailabilityError`.
 - `probe()` — performs lightweight readiness checks (e.g., ensure `/dev`
 - `start()` — opens all configured sensors, performs warm-up/calibration, and
 - `get_sensor_data()` — asks each sensor for its subscribed signals, stores the
   responses in the canonical buffer order, and returns a read-only view along
   with metadata (timestamp, stale flag, optional coverage map). Missing required
-  measurements raise `SensorStaleDataError` by default, while optional signals
-  fall back to their configured defaults but are tracked via
-  `FeatureMetadata.optional_presence` / `missing_optional` for diagnostics.
+  measurements raise `SensorStaleDataError`; optional signals remain absent but
+  are tracked via `FeatureMetadata.optional_presence` / `missing_optional` for
+  diagnostics.
 - `stop()` — stops all sensors and flushes modality diagnostics.
 
 Plan construction happens in the constructor. After `start()` succeeds, the
@@ -155,9 +156,9 @@ tick.
 - Allocated once, reused every tick; the runtime may retain a pointer for
   diagnostics, but only the wrangler writes into it.
 - Buffer indices are stable across the session; derived signals occupy fixed
-  slots and default values until an upstream component provides replacements.
-- Each tick, the wrangler records presence/absence of optional signals so the
-  diagnostics sink can report coverage (e.g., missing GRF sensor).
+  slots and are populated by their owning sensor each tick.
+- Each tick, the wrangler records presence/absence of optional (or derived)
+  signals so the diagnostics sink can report coverage (e.g., missing GRF sensor).
 
 ### Diagnostics sink contract
 
@@ -179,7 +180,7 @@ linear:
 
 1. Build the DataWrangler plan and probe hardware readiness.
 2. Start sensors and actuator, then enter the scheduler loop.
-3. Each tick: fetch sensor data, compute torques, clamp via safety, command the
+3. Each tick: read sensor data, compute torques, clamp via safety, command the
    actuator.
 4. If any step raises (sensor stale, controller fault, actuator error), catch
    the exception, emit zero torque, stop all hardware, finalise diagnostics, and
@@ -224,9 +225,10 @@ files from `diagnostics/`. No per-component subdirectories are required.
 
 - **Sensor stale data**: Respect per-sensor `fault_strategy`.
   - `raise`: bubble `SensorStaleDataError`, trigger cleanup/exit.
-  - `warn`: log, substitute defaults for this tick, continue.
-  - `fallback`: use synthetic samples (held last good value or zero) until fresh
-    data returns; diagnostics record the substitution.
+  - `warn`: log, surface the gap in diagnostics, and continue with the signal
+    omitted for that tick.
+  - `fallback`: use sensor-specific substitution logic (when explicitly
+    implemented) until fresh data returns; diagnostics record the substitution.
 - **Derived signal failure**: treat as sensor stale; attribute to the originating
   modality in diagnostics.
 - **Controller exceptions**: catch, emit zero torque, stop hardware, finalise
@@ -238,6 +240,26 @@ files from `diagnostics/`. No per-component subdirectories are required.
   starting hardware.
 
 ## Sequence
+
+
+### BaseSensor read sequence
+
+```mermaid
+sequenceDiagram
+    participant Wrangler as DataWrangler
+    participant Sensor as BaseSensor
+    participant Driver as SensorHardwareDriver
+
+    Wrangler->>Sensor: read_signals(requested canonicals)
+    Sensor->>Sensor: determine measured dependencies
+    loop for each dependency
+        Sensor->>Driver: read_raw()
+        Driver-->>Sensor: RawSample
+    end
+    Sensor->>Sensor: update measured buffer
+    Sensor->>Sensor: derive canonical values
+    Sensor-->>Wrangler: canonical map
+```
 
 ### Startup handshake
 
@@ -274,8 +296,9 @@ sequenceDiagram
 **Validation guarantees**
 
 - Every required controller signal must have at least one compatible provider.
-- Optional signals may be satisfied by hardware or by defaults declared in the
-  profile.
+- Optional signals may be satisfied by hardware or by sensor-side derivations.
+  When a provider is unavailable for a tick, the gap is recorded in diagnostics
+  without injecting placeholder values.
 - Derived signals express their dependencies explicitly, so the plan fails early
   if prerequisites are unavailable.
 - Probe failures bubble back up before the runtime loop starts, allowing the
@@ -296,7 +319,7 @@ sequenceDiagram
     
     Scheduler->>Runtime: tick(start_time)
     Runtime->>Wrangler: get_sensor_data()
-    Wrangler->>SensorType: fetch(required signals)
+    Wrangler->>SensorType: read(requested signals)
     SensorType-->>Wrangler: canonical sample
     Wrangler-->>Runtime: feature vector
     Runtime->>Controller: compute_torque(features)
@@ -357,8 +380,25 @@ classDiagram
     SensorTypeBase *-- SensorHardwareDriver : owns
     SensorTypeBase --> BaseSensor : wraps
     DataWrangler *-- SensorTypeBase : owns
-    DataWrangler --> SensorTypeBase : fetches signals
+    DataWrangler --> SensorTypeBase : reads signals
 ```
+
+Sensor types (e.g., `BaseIMU`) maintain two views of their data:
+
+- a **measured buffer** populated directly from hardware drivers (segment angles,
+  raw force channels, etc.);
+- a **canonical view** that exposes the controller’s requested signals. When the
+  wrangler asks for a canonical value (such as
+  `knee_flexion_angle_ipsi_rad`), the sensor computes it from the measured
+  channels and returns only the canonical result. Derived expressions remain
+  sensor-owned, so the wrangler never needs to understand how features are
+  composed or which hardware devices participate.
+
+If a sensor cannot supply a required canonical signal for a tick—because a raw
+channel is missing or a derivation fails—it raises `SensorStaleDataError`. No
+synthetic defaults are injected; missing optional channels are surfaced through
+diagnostics so operators can decide whether to continue.
+
 
 ### Runtime, safety, and actuation
 
@@ -528,8 +568,9 @@ To switch from the serial IMU to the Bluetooth variant, change the
   same vocabulary (`hip_flexion_angle_ipsi_rad`, `vertical_grf_ipsi_N`,
   `knee_flexion_moment_ipsi_Nm`, etc.).
 - Derivation is handled inside sensor implementations (e.g., an IMU may
-  compute `knee_flexion_angle_ipsi_rad` from segment angles). Configuration only
-  maps canonical signals to hardware aliases or marks them as derived.
+  compute `knee_flexion_angle_ipsi_rad` from segment angles held in its measured
+  buffer). Configuration only maps canonical signals to hardware aliases or
+  marks them as derived.
 - Optional inputs are marked on `input_signals` entries (e.g., `required: false`).
   Absence is handled by runtime policy rather than config-level defaults.
 
@@ -557,15 +598,14 @@ To add a new modality or actuator:
 
 1. Implement the abstract methods shown in the UML diagrams and honour the
    component contracts described above.
-2. Register any new canonical signals with documentation and defaults.
+2. Register any new canonical signals with documentation and dependencies.
 3. Register the hardware alias and class under `hardware.sensors` or
    `hardware.actuators` and map signals under `input_signals`/`output_signals`.
 4. If the modality synthesises signals, implement derivation inside the sensor
    type; no config changes beyond signal mapping are required.
 5. Update `input_signals`/`output_signals` ordering or joints as needed and
    update `FeaturePlan` validation tests.
-6. Provide calibration hooks or defaults so the calibration step can execute
-   cleanly.
+6. Provide calibration hooks so the calibration step can execute cleanly.
 7. Emit diagnostics in the documented JSONL format and bump schema versions when
    fields change.
 8. Update the failure policy documentation or defaults if the new component
