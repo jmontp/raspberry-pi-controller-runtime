@@ -87,13 +87,17 @@ class SoftRealtimeLoop(Protocol, Iterable[float]):
     """Protocol describing the soft-realtime loop contract consumed by the scheduler."""
 
     def __enter__(self) -> "SoftRealtimeLoop":
+        """Enter the loop context."""
         ...
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        """Leave the loop context, performing any cleanup."""
         ...
 
     def __iter__(self) -> Iterator[float]:
+        """Iterate over elapsed tick times emitted by the loop."""
         ...
 
     def stop(self) -> None:  # pragma: no cover - optional for some implementations
+        """Request the loop to stop producing further ticks."""
         ...

@@ -4,11 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
-
-import pandas as pd
+from typing import TYPE_CHECKING, Any, Iterable
 
 from .base import BaseVerticalGRF, BaseVerticalGRFConfig, VerticalGRFSample
+
+try:  # pragma: no cover - optional dependency
+    import pandas as _pandas
+except Exception:  # pragma: no cover - optional dependency
+    _pandas = None  # type: ignore[assignment]
+
+if TYPE_CHECKING:  # pragma: no cover - typing aid
+    from pandas import DataFrame
+else:
+    DataFrame = Any
 
 _CHANNEL_MAP = {
     "vertical_grf_ipsi_N": "vertical_grf_ipsi_BW",
@@ -38,7 +46,7 @@ class ReplayVerticalGRF(BaseVerticalGRF):
     body_mass_kg: float | None = None
     time_column: str | None = None
     config_override: BaseVerticalGRFConfig | dict | None = None
-    _frame: pd.DataFrame | None = field(init=False, default=None, repr=False)
+    _frame: DataFrame | None = field(init=False, default=None, repr=False)
     _timestamps: list[float] = field(init=False, default_factory=list, repr=False)
     _cursor: int = field(init=False, default=0, repr=False)
 
@@ -71,7 +79,7 @@ class ReplayVerticalGRF(BaseVerticalGRF):
         frame = self._load_frame()
         frame = self._apply_filters(frame)
         frame = self._slice_frame(frame)
-        if frame.empty:
+        if getattr(frame, "empty", False):
             raise ValueError("ReplayVerticalGRF dataset is empty after filtering/slicing")
         self._frame = frame.reset_index(drop=True)
         self._timestamps = self._extract_timestamps(self._frame)
@@ -113,15 +121,16 @@ class ReplayVerticalGRF(BaseVerticalGRF):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _load_frame(self) -> pd.DataFrame:
+    def _load_frame(self) -> DataFrame:
+        pandas = _require_pandas()
         suffix = self._path.suffix.lower()
         if suffix == ".parquet":
-            return pd.read_parquet(self._path)
+            return pandas.read_parquet(self._path)
         if suffix in {".feather", ".arrow"}:
-            return pd.read_feather(self._path)
-        return pd.read_csv(self._path)
+            return pandas.read_feather(self._path)
+        return pandas.read_csv(self._path)
 
-    def _apply_filters(self, frame: pd.DataFrame) -> pd.DataFrame:
+    def _apply_filters(self, frame: DataFrame) -> DataFrame:
         filtered = frame
         if self.subject is not None:
             if "subject" not in filtered.columns:
@@ -133,7 +142,7 @@ class ReplayVerticalGRF(BaseVerticalGRF):
             filtered = filtered[filtered["task"].isin(self._tasks)]
         return filtered
 
-    def _slice_frame(self, frame: pd.DataFrame) -> pd.DataFrame:
+    def _slice_frame(self, frame: DataFrame) -> DataFrame:
         start = max(self.start_index, 0)
         if start >= len(frame):
             raise ValueError("ReplayVerticalGRF start_index beyond dataset length")
@@ -142,7 +151,16 @@ class ReplayVerticalGRF(BaseVerticalGRF):
         end = min(start + self.max_samples, len(frame))
         return frame.iloc[start:end]
 
-    def _extract_timestamps(self, frame: pd.DataFrame) -> list[float]:
+    def _extract_timestamps(self, frame: DataFrame) -> list[float]:
         if self.time_column and self.time_column in frame.columns:
             return [float(value) for value in frame[self.time_column].tolist()]
         return [idx * self.dt for idx in range(len(frame))]
+
+
+def _require_pandas():
+    """Return the pandas module when installed."""
+    if _pandas is None:
+        raise RuntimeError(
+            "pandas is required for ReplayVerticalGRF. Install pandas to use this adapter."
+        )
+    return _pandas
