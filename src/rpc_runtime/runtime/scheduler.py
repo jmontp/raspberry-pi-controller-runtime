@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import abc
 import contextlib
+import logging
 import time
 from dataclasses import dataclass
 from typing import Callable, Iterable, Iterator, Mapping, Protocol
+
+LOGGER = logging.getLogger(__name__)
 
 
 class SchedulerFault(RuntimeError):  # noqa: N818
@@ -45,6 +48,8 @@ class SimpleScheduler(BaseScheduler):
     duration_s: float | None = None
     jitter_budget_s: float = 0.0
     max_overruns_before_fault: int = 3
+    fault_on_overrun: bool = False
+    overrun_warning_cooldown_s: float = 1.0
 
     def __post_init__(self) -> None:
         """Normalise configuration and initialise jitter tracking."""
@@ -62,6 +67,7 @@ class SimpleScheduler(BaseScheduler):
         self._jitter_max: float | None = None
         self._jitter_sum = 0.0
         self._jitter_count = 0
+        self._last_overrun_warning: float | None = None
 
     def ticks(self) -> Iterator[float]:
         """Yield elapsed time while sleeping to maintain the requested frequency."""
@@ -116,9 +122,12 @@ class SimpleScheduler(BaseScheduler):
         if self._overrun_threshold and actual_dt > (self._dt_target + self.jitter_budget_s):
             self._overrun_streak += 1
             if self._overrun_streak >= self._overrun_threshold:
-                raise SchedulerFault(
-                    f"Scheduler detected {self._overrun_streak} consecutive overruns"
-                )
+                if self.fault_on_overrun:
+                    raise SchedulerFault(
+                        f"Scheduler detected {self._overrun_streak} consecutive overruns"
+                    )
+                self._emit_overrun_warning(actual_dt)
+                self._overrun_streak = 0
         else:
             self._overrun_streak = 0
 
@@ -130,6 +139,24 @@ class SimpleScheduler(BaseScheduler):
             self._jitter_min = jitter
         if self._jitter_max is None or jitter > self._jitter_max:
             self._jitter_max = jitter
+
+    def _emit_overrun_warning(self, actual_dt: float) -> None:
+        """Log a warning when the overrun threshold is exceeded."""
+        if self._overrun_threshold <= 0:
+            return
+        cooldown = max(0.0, float(self.overrun_warning_cooldown_s))
+        now = time.monotonic()
+        if self._last_overrun_warning is not None and (now - self._last_overrun_warning) < cooldown:
+            return
+        self._last_overrun_warning = now
+        LOGGER.warning(
+            "Scheduler experienced %d consecutive overruns "
+            "(dt=%.6f s, target=%.6f s, jitter_budget=%.6f s); continuing execution",
+            self._overrun_threshold,
+            actual_dt,
+            self._dt_target,
+            self.jitter_budget_s,
+        )
 
 
 @dataclass(slots=True)

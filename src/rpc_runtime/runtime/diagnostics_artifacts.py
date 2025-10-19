@@ -61,6 +61,24 @@ GLOSSARY_ENTRIES: tuple[tuple[str, str], ...] = (
 INPUT_COLOR = "#1f77b4"
 OUTPUT_COLOR = "#d62728"
 
+MEASUREMENT_BASE_COLORS: dict[str, str] = {
+    "hip_flexion": "#1f77b4",
+    "thigh_sagittal": "#ff7f0e",
+    "knee_flexion": "#2ca02c",
+    "shank_sagittal": "#d62728",
+    "ankle_dorsiflexion": "#9467bd",
+    "foot_sagittal": "#8c564b",
+    "trunk_sagittal": "#17becf",
+    "vertical_grf": "#bcbd22",
+}
+
+SIDE_LIGHTEN: dict[str, float] = {
+    "ipsi": 0.0,
+    "contra": 0.2,
+}
+VELOCITY_LIGHTEN = 0.35
+FORCE_LIGHTEN = 0.15
+
 ANGLE_SIGNALS = [
     "hip_flexion_angle_ipsi_rad",
     "knee_flexion_angle_ipsi_rad",
@@ -120,6 +138,54 @@ SIGNAL_ORDER: list[str] = (
 )
 
 
+def _lighten_color(color: str, amount: float) -> str:
+    color_value = color.lstrip("#")
+    if len(color_value) != 6:
+        return f"#{color_value}" if not color.startswith("#") else color
+    try:
+        r, g, b = (int(color_value[i : i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return f"#{color_value}" if not color.startswith("#") else color
+    amount_clamped = max(0.0, min(amount, 1.0))
+    r = int(r + (255 - r) * amount_clamped)
+    g = int(g + (255 - g) * amount_clamped)
+    b = int(b + (255 - b) * amount_clamped)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _strip_signal_units(name: str) -> str:
+    stripped = name
+    for suffix in ("_rad_s", "_rad", "_Nm_kg", "_Nm", "_N"):
+        if stripped.endswith(suffix):
+            stripped = stripped[: -len(suffix)]
+            break
+    return stripped
+
+
+def _signal_color_metadata(name: str) -> tuple[str, str | None, str]:
+    working = _strip_signal_units(name)
+    side: str | None = None
+    for candidate in ("ipsi", "contra"):
+        marker = f"_{candidate}"
+        if marker in working:
+            working = working.split(marker)[0]
+            side = candidate
+            break
+    quantity = "other"
+    if "_velocity" in working:
+        quantity = "velocity"
+    elif "_angle" in working:
+        quantity = "angle"
+    elif "_grf" in working:
+        quantity = "force"
+    measurement = working
+    for suffix in ("_angle", "_velocity"):
+        if measurement.endswith(suffix):
+            measurement = measurement[: -len(suffix)]
+            break
+    return measurement, side, quantity
+
+
 def _resolve_signal_unit(name: str) -> str:
     if name in SIGNAL_UNITS:
         return SIGNAL_UNITS[name]
@@ -135,7 +201,16 @@ def _resolve_signal_unit(name: str) -> str:
 def _resolve_signal_color(name: str) -> str:
     if name.startswith("torque_safe_") or name.startswith("torque_raw_"):
         return OUTPUT_COLOR
-    return INPUT_COLOR
+    measurement, side, quantity = _signal_color_metadata(name)
+    base_color = MEASUREMENT_BASE_COLORS.get(measurement, INPUT_COLOR)
+    lighten_amount = 0.0
+    if quantity == "velocity":
+        lighten_amount += VELOCITY_LIGHTEN
+    elif quantity == "force":
+        lighten_amount += FORCE_LIGHTEN
+    if side is not None:
+        lighten_amount += SIDE_LIGHTEN.get(side, 0.0)
+    return _lighten_color(base_color, lighten_amount)
 
 
 def _resolve_display_name(name: str) -> str:
@@ -174,11 +249,12 @@ class _RTPlotPublisher:
         for unit_key, items in grouped.items():
             ylabel = "" if unit_key == "unitless" else unit_key
             title = "Unitless" if unit_key == "unitless" else unit_key
+            widths = [1] * len(items)
             layout.append(
                 {
                     "names": [label for _, label, _ in items],
                     "colors": [color for _, _, color in items],
-                    "line_width": 1,
+                    "line_width": widths,
                     "ylabel": ylabel,
                     "title": title,
                 }
@@ -869,7 +945,7 @@ class DiagnosticsArtifacts:
         else:
             time_series = pd.Series(range(len(df)), dtype=float)
             time_label = "Sample"
-        time_series = time_series.fillna(method="ffill").fillna(method="bfill")
+        time_series = time_series.ffill().bfill()
         time_values = time_series.to_numpy(dtype=float, copy=True)
 
         entries: list[tuple[str, str, str, str, pd.Series]] = []
