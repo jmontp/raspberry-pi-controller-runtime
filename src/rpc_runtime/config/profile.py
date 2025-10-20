@@ -19,6 +19,7 @@ from .models import (
     ActuatorBinding,
     ControllerBundle,
     ControllerManifest,
+    DiagnosticsConfig,
     SensorBinding,
     SignalRoute,
 )
@@ -249,12 +250,15 @@ def _load_structured_profile(
         config=actuator_config,
     )
 
+    diagnostics_config = _parse_diagnostics_config(raw.get("diagnostics"))
+
     return RuntimeProfile(
         name=profile_name,
         sensors=tuple(sensor_bindings),
         actuator=actuator_binding,
         controller=controller_bundle,
         signal_routes=tuple(signal_routes),
+        diagnostics=diagnostics_config,
     )
 
 
@@ -305,6 +309,107 @@ def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError(f"Profile YAML missing '{label}' mapping")
     return value
+
+
+def _parse_diagnostics_config(raw: Any) -> DiagnosticsConfig | None:
+    """Normalise optional diagnostics configuration from profile YAML."""
+    if raw is None:
+        return None
+    mapping = _require_mapping(raw, "diagnostics")
+    artifacts_root = mapping.get("artifacts_root")
+    if artifacts_root is None and "root" in mapping:
+        artifacts_root = mapping["root"]
+    artifacts_root_str = str(artifacts_root).strip() if artifacts_root is not None else None
+    if artifacts_root_str:
+        artifacts_root_value = artifacts_root_str
+    else:
+        artifacts_root_value = None
+    rtplot_enabled_raw = mapping.get("rtplot_enabled")
+    if rtplot_enabled_raw is None and "rtplot" in mapping:
+        rtplot_enabled_raw = mapping["rtplot"]
+    rtplot_enabled_value: bool | None
+    if rtplot_enabled_raw is None:
+        rtplot_enabled_value = None
+    else:
+        rtplot_enabled_value = bool(rtplot_enabled_raw)
+    rtplot_host_raw = mapping.get("rtplot_host")
+    rtplot_host_value = None
+    if rtplot_host_raw is not None:
+        rtplot_host_value = str(rtplot_host_raw).strip()
+        if not rtplot_host_value:
+            rtplot_host_value = None
+    if rtplot_enabled_value is None and rtplot_host_value is not None:
+        rtplot_enabled_value = True
+    if rtplot_enabled_value is None:
+        rtplot_enabled_value = False
+    return DiagnosticsConfig(
+        artifacts_root=artifacts_root_value,
+        rtplot_enabled=rtplot_enabled_value,
+        rtplot_host=rtplot_host_value,
+    )
+
+
+def _normalise_artifacts_root(value: str | Path | None) -> Path | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw or raw.lower() == "none":
+        return None
+    return Path(raw).expanduser().resolve()
+
+
+def _normalise_rtplot_host(value: str | None) -> str | None:
+    if value is None:
+        return None
+    host = value.strip()
+    return host or None
+
+
+def resolve_diagnostics_settings(
+    profile: RuntimeProfile,
+    *,
+    cli_root: str | Path | None,
+    default_root: Path | None,
+    cli_rtplot_host: str | None,
+    rtplot_requested: bool,
+) -> tuple[Path | None, str | None]:
+    """Resolve diagnostics artifacts directory and rtplot host for runtime execution."""
+    cli_root_path = _normalise_artifacts_root(cli_root)
+    cli_root_disabled = False
+    if cli_root is not None and cli_root_path is None:
+        raw = str(cli_root).strip()
+        if not raw or raw.lower() == "none":
+            cli_root_disabled = True
+
+    profile_root = _normalise_artifacts_root(
+        getattr(profile.diagnostics, "artifacts_root", None) if profile.diagnostics else None
+    )
+    default_root_path = _normalise_artifacts_root(default_root)
+
+    if cli_root_disabled:
+        resolved_root: Path | None = None
+    elif cli_root_path is not None:
+        resolved_root = cli_root_path
+    else:
+        resolved_root = profile_root or default_root_path
+
+    cli_host = _normalise_rtplot_host(cli_rtplot_host)
+    profile_host = _normalise_rtplot_host(
+        getattr(profile.diagnostics, "rtplot_host", None) if profile.diagnostics else None
+    )
+
+    rtplot_enabled = rtplot_requested or bool(cli_host)
+    if not rtplot_enabled and profile.diagnostics is not None:
+        if profile.diagnostics.rtplot_enabled or profile_host:
+            rtplot_enabled = True
+
+    resolved_host = cli_host or profile_host
+    if rtplot_enabled and not resolved_host:
+        resolved_host = "local"
+    if not rtplot_enabled:
+        resolved_host = None
+
+    return resolved_root, resolved_host
 
 
 def _parse_controllers(

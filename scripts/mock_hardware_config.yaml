@@ -53,3 +53,7 @@ controllers:
         outputs:
           knee_flexion_moment_ipsi_Nm: 0.0
           ankle_dorsiflexion_moment_ipsi_Nm: 0.0
+
+diagnostics:
+  rtplot_host: local
+  rtplot_enabled: false

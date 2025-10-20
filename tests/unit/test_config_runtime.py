@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from rpc_runtime.config import build_runtime_components, load_runtime_profile
+from rpc_runtime.config import (
+    build_runtime_components,
+    load_runtime_profile,
+    resolve_diagnostics_settings,
+)
 from rpc_runtime.config.models import SignalRoute
 from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.runtime.wrangler import (
@@ -170,3 +174,131 @@ controllers:
     assert controller_cfg["torque_scale"] == 0.1
     assert controller_cfg["torque_limit_nm"] == 10.0
     assert "gains" not in controller_cfg
+
+
+def test_profile_diagnostics_rtplot_config(tmp_path: Path) -> None:
+    """Diagnostics section configures rtplot defaults for the runtime."""
+    profile_yaml = tmp_path / "diag_profile.yaml"
+    profile_yaml.write_text(
+        """
+profile:
+  name: diag_example
+  controller: pi_diag
+
+input_signals:
+  - { name: knee_flexion_angle_ipsi_rad, hardware: imu_mock }
+  - { name: knee_flexion_velocity_ipsi_rad_s, hardware: imu_mock }
+
+output_signals:
+  - { name: knee_flexion_moment_ipsi_Nm, hardware: actuator_mock }
+
+hardware:
+  sensors:
+    imu_mock:
+      class: rpc_runtime.sensors.imu.mock.MockIMU
+      config: {}
+  actuators:
+    actuator_mock:
+      class: rpc_runtime.actuators.mock.MockActuator
+      config: {}
+
+controllers:
+  pi_diag:
+    implementation: rpc_runtime.controllers.pi_controller.PIController
+    joints: ["knee_flexion_moment_ipsi_Nm"]
+    config:
+      dt: 0.01
+      torque_scale: 0.1
+      torque_limit_nm: 10.0
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
+      config:
+        outputs:
+          knee_flexion_moment_ipsi_Nm: 0.0
+
+diagnostics:
+  rtplot_host: 192.168.0.50:5555
+  rtplot_enabled: true
+"""
+    )
+    profile = load_runtime_profile(profile_yaml)
+    assert profile.diagnostics is not None
+    assert profile.diagnostics.rtplot_enabled is True
+    assert profile.diagnostics.rtplot_host == "192.168.0.50:5555"
+    default_root = (tmp_path / "default_diags").resolve()
+    resolved_root, resolved_host = resolve_diagnostics_settings(
+        profile,
+        cli_root=None,
+        default_root=default_root,
+        cli_rtplot_host=None,
+        rtplot_requested=False,
+    )
+    assert resolved_root == default_root
+    assert resolved_host == "192.168.0.50:5555"
+
+
+def test_resolve_diagnostics_cli_overrides(tmp_path: Path) -> None:
+    """CLI inputs override diagnostics defaults when provided."""
+    profile_yaml = tmp_path / "diag_profile_cli.yaml"
+    profile_yaml.write_text(
+        """
+profile:
+  name: diag_cli
+  controller: pi_diag
+
+input_signals:
+  - { name: knee_flexion_angle_ipsi_rad, hardware: imu_mock }
+
+output_signals:
+  - { name: knee_flexion_moment_ipsi_Nm, hardware: actuator_mock }
+
+hardware:
+  sensors:
+    imu_mock:
+      class: rpc_runtime.sensors.imu.mock.MockIMU
+      config: {}
+  actuators:
+    actuator_mock:
+      class: rpc_runtime.actuators.mock.MockActuator
+      config: {}
+
+controllers:
+  pi_diag:
+    implementation: rpc_runtime.controllers.pi_controller.PIController
+    joints: ["knee_flexion_moment_ipsi_Nm"]
+    config:
+      dt: 0.01
+      torque_scale: 0.1
+      torque_limit_nm: 10.0
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
+      config:
+        outputs:
+          knee_flexion_moment_ipsi_Nm: 0.0
+
+diagnostics:
+  artifacts_root: ~/should_not_use
+  rtplot_host: 10.0.0.5:9000
+"""
+    )
+    profile = load_runtime_profile(profile_yaml)
+    cli_root = tmp_path / "cli_root"
+    resolved_root, resolved_host = resolve_diagnostics_settings(
+        profile,
+        cli_root=cli_root,
+        default_root=None,
+        cli_rtplot_host="tv ",
+        rtplot_requested=False,
+    )
+    assert resolved_root == cli_root.resolve()
+    assert resolved_host == "tv"
+
+    disabled_root, host_with_flag = resolve_diagnostics_settings(
+        profile,
+        cli_root="none",
+        default_root=tmp_path / "default",
+        cli_rtplot_host=None,
+        rtplot_requested=True,
+    )
+    assert disabled_root is None
+    assert host_with_flag == "10.0.0.5:9000"

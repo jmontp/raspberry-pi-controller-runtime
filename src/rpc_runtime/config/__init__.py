@@ -8,6 +8,7 @@ from typing import Union
 
 from rpc_runtime.runtime.wrangler import HardwareAvailabilityError
 
+from .models import DiagnosticsConfig
 from .profile import (
     ActuatorBinding,
     ControllerBundle,
@@ -19,6 +20,7 @@ from .profile import (
     build_runtime_components,
     load_components,
     load_runtime_profile,
+    resolve_diagnostics_settings,
 )
 
 
@@ -36,11 +38,13 @@ __all__ = [
     "load_components",
     "load_components_from",
     "RuntimeProfile",
+    "DiagnosticsConfig",
     "RuntimeComponents",
     "ActuatorBinding",
     "ControllerBundle",
     "ControllerManifest",
     "SensorBinding",
     "SignalRoute",
+    "resolve_diagnostics_settings",
     "HardwareAvailabilityError",
 ]

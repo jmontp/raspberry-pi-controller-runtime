@@ -14,7 +14,11 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from rpc_runtime.config import build_runtime_components, load_runtime_profile  # noqa: E402
+from rpc_runtime.config import (  # noqa: E402
+    build_runtime_components,
+    load_runtime_profile,
+    resolve_diagnostics_settings,
+)
 from rpc_runtime.runtime import DiagnosticsArtifacts, RuntimeLoop, RuntimeLoopConfig  # noqa: E402
 
 LOGGER = logging.getLogger("rpc_runtime.scripts.run")
@@ -47,8 +51,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--diagnostics",
         type=str,
-        default=str(DEFAULT_DIAGNOSTICS_ROOT),
-        help="Directory for diagnostics artifacts; pass 'none' to disable",
+        default=None,
+        help="Directory for diagnostics artifacts; pass 'none' to disable (defaults to script diagnostics/ when unspecified)",
     )
     parser.add_argument(
         "--profile-name",
@@ -69,8 +73,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--rtplot-host",
         type=str,
-        default="local",
-        help="Target plot host for rtplot (e.g. 'local', 'tv', '192.168.1.42:5555').",
+        default=None,
+        help="Target plot host for rtplot (overrides profile/default when set).",
     )
     return parser.parse_args(argv)
 
@@ -81,41 +85,37 @@ def _configure_logging(verbose: bool) -> None:
     logging.getLogger("matplotlib").setLevel(logging.WARNING)
 
 
-def _normalise_diagnostics_root(raw: str | None) -> Path | None:
-    if raw is None:
-        return None
-    value = raw.strip()
-    if not value or value.lower() == "none":
-        return None
-    return Path(value).expanduser().resolve()
-
-
 def run_loop(
     *,
     profile_path: Path,
     frequency_hz: float,
     duration_s: float | None,
-    diagnostics_root: Path | None,
+    diagnostics_root: str | Path | None,
     profile_name_override: str | None,
     rtplot: bool,
-    rtplot_host: str,
+    rtplot_host: str | None,
 ) -> Path | None:
     """Build runtime components and execute the control loop."""
     profile = load_runtime_profile(profile_path)
     components = build_runtime_components(profile)
     effective_profile_name = profile_name_override or profile.name
 
-    diagnostics_root = diagnostics_root
-    if diagnostics_root is not None:
-        diagnostics_root.mkdir(parents=True, exist_ok=True)
+    resolved_root, rtplot_host_value = resolve_diagnostics_settings(
+        profile,
+        cli_root=diagnostics_root,
+        default_root=DEFAULT_DIAGNOSTICS_ROOT,
+        cli_rtplot_host=rtplot_host,
+        rtplot_requested=rtplot,
+    )
 
-    rtplot_host_value = rtplot_host if rtplot else None
+    if resolved_root is not None:
+        resolved_root.mkdir(parents=True, exist_ok=True)
 
     artifacts = DiagnosticsArtifacts.create(
-        root=diagnostics_root,
+        root=resolved_root,
         profile_path=profile_path,
         profile_name=effective_profile_name,
-        enable_csv=diagnostics_root is not None,
+        enable_csv=resolved_root is not None,
         target_frequency_hz=frequency_hz,
         signal_routes=profile.signal_routes,
         rtplot_host=rtplot_host_value,
@@ -155,7 +155,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _configure_logging(args.verbose)
 
     profile_path = args.config.expanduser().resolve()
-    diagnostics_root = _normalise_diagnostics_root(args.diagnostics)
+    diagnostics_root = args.diagnostics
 
     try:
         run_dir = run_loop(

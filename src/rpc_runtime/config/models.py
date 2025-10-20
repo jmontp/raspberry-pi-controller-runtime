@@ -38,6 +38,15 @@ class ActuatorBinding:
 
 
 @dataclass(slots=True)
+class DiagnosticsConfig:
+    """Optional runtime diagnostics configuration."""
+
+    artifacts_root: str | None = None
+    rtplot_enabled: bool = False
+    rtplot_host: str | None = None
+
+
+@dataclass(slots=True)
 class ControllerManifest:
     """Controller IO manifest capturing schema + actuator contract."""
 
@@ -85,6 +94,7 @@ class RuntimeProfile:
     actuator: ActuatorBinding
     controller: ControllerBundle
     signal_routes: tuple[SignalRoute, ...]
+    diagnostics: DiagnosticsConfig | None = None
 
     def available_signals(self) -> set[str]:
         """Return the union of signals exposed by all configured sensors."""

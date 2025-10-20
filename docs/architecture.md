@@ -586,6 +586,7 @@ To switch from the serial IMU to the Bluetooth variant, change the
   aliases or marks them as derived.
 - Optional inputs are marked on `input_signals` entries (e.g., `required: false`).
   Absence is handled by runtime policy rather than config-level defaults.
+- Profiles may include a top-level `diagnostics` mapping to configure runtime defaults (for example `rtplot_host: 192.168.0.50:5555` and `rtplot_enabled: true`), so the CLI can pick up plotting targets without extra flags.
 
 Note: Canonical signal names and ordering are defined in the separate LocoHub
 library and imported by this runtime. Adopt LocoHub conventions rather than
