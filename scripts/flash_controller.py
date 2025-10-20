@@ -17,12 +17,15 @@ def main() -> None:
     parser.add_argument("--target", default="~/controller", help="Remote path")
     args = parser.parse_args()
 
-    subprocess.run([
-        "scp",
-        "-r",
-        str(args.bundle),
-        f"{args.user}@{args.host}:{args.target}",
-    ], check=True)
+    subprocess.run(
+        [
+            "scp",
+            "-r",
+            str(args.bundle),
+            f"{args.user}@{args.host}:{args.target}",
+        ],
+        check=True,
+    )
 
 
 if __name__ == "__main__":

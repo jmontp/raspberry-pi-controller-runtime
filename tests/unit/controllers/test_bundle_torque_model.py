@@ -70,7 +70,9 @@ def test_bundle_torque_model_scales_mass_and_assistance(tmp_path):
 
 def test_bundle_torque_model_falls_back_to_torque_index_keys(tmp_path):
     bundle_dir = _write_bundle(tmp_path)
-    backend = DummyBackend(outputs={"torque_0": 1.0, "torque_1": 2.0}, features=("feature_a", "feature_b"))
+    backend = DummyBackend(
+        outputs={"torque_0": 1.0, "torque_1": 2.0}, features=("feature_a", "feature_b")
+    )
     model = BundleTorqueModel(
         bundle_dir,
         output_map={"knee": "knee_flexion_moment_ipsi_Nm_kg"},
@@ -84,7 +86,9 @@ def test_bundle_torque_model_falls_back_to_torque_index_keys(tmp_path):
 
 def test_bundle_torque_model_requires_mass_for_normalised_outputs(tmp_path):
     bundle_dir = _write_bundle(tmp_path)
-    backend = DummyBackend(outputs={"knee_flexion_moment_ipsi_Nm_kg": 0.5}, features=("feature_a", "feature_b"))
+    backend = DummyBackend(
+        outputs={"knee_flexion_moment_ipsi_Nm_kg": 0.5}, features=("feature_a", "feature_b")
+    )
     with pytest.raises(ValueError, match="subject_mass_kg"):
         BundleTorqueModel(
             bundle_dir,

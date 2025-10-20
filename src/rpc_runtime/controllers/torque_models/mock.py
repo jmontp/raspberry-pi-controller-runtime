@@ -28,4 +28,8 @@ class MockTorqueModel(TorqueModel):
 
     def expected_features(self) -> Iterable[str]:
         """Expose the configured feature names requested by this model."""
-        return self.inputs
+        if self.inputs is None:
+            return ()
+        if isinstance(self.inputs, tuple):
+            return self.inputs
+        return tuple(self.inputs)

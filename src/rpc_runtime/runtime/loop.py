@@ -130,12 +130,8 @@ class RuntimeLoop:
                             except (TypeError, ValueError):
                                 continue
                     safety_metrics = self._safety.metrics
-                    scheduler_snapshot["safety_clamp_events"] = float(
-                        safety_metrics.clamp_events
-                    )
-                    scheduler_snapshot["safety_fault_count"] = float(
-                        safety_metrics.fault_count
-                    )
+                    scheduler_snapshot["safety_clamp_events"] = float(safety_metrics.clamp_events)
+                    scheduler_snapshot["safety_fault_count"] = float(safety_metrics.fault_count)
 
                     timestamp = meta.timestamp
                     self._diagnostics.log_tick(

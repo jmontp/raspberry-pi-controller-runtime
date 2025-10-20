@@ -39,6 +39,21 @@ class _MockKneeAngleController:
         return self._joints
 
 
+def test_mock_imu_accepts_canonical_port_names() -> None:
+    """Ensure IMU configs accept canonical feature names in port maps."""
+    from rpc_runtime.sensors.imu.base import BaseIMUConfig
+
+    config = BaseIMUConfig(
+        port_map={
+            "shank_sagittal_angle_ipsi_rad": "/dev/null",
+            "foot_sagittal_angle_ipsi_rad": "/dev/null",
+        },
+    )
+    imu = MockIMU(config_override=config, loop=True)
+    assert "shank_r" in imu.port_map
+    assert imu.port_map["shank_r"] == "/dev/null"
+
+
 def test_runtime_loop_derives_knee_angle_from_segments() -> None:
     """Ensure the runtime derives knee flexion from thigh and shank segments."""
     segment_angles = (

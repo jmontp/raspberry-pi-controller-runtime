@@ -76,7 +76,9 @@ class JoblibTorqueModel(TorqueModel):
             raise RuntimeError("Unable to determine torque output columns for joblib model")
 
         if output_map:
-            missing = [source for source in output_map.values() if source not in self._torque_columns]
+            missing = [
+                source for source in output_map.values() if source not in self._torque_columns
+            ]
             if missing:
                 raise ValueError(f"output_map references unknown torque columns: {missing}")
             self._output_map = dict(output_map)

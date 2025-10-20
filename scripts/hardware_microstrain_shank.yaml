@@ -16,7 +16,7 @@ hardware:
       class: rpc_runtime.sensors.imu.microstrain_3dm_gx5.Microstrain3DMGX5IMU
       config:
         port_map:
-          shank_r: /dev/ttyUSB0
+          shank_sagittal_angle_ipsi_rad: /dev/ttyUSB0
         calibration_samples: 200
         calibration_interval_s: 0.002
         max_stale_samples: 50

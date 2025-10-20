@@ -70,8 +70,12 @@ class InMemoryDiagnosticsSink(DiagnosticsSink):
         grf = _select_grf_sample(feature_packet)
         row = {
             "timestamp": float(timestamp),
-            "imu_joint_angles": tuple(float(x) for x in getattr(imu, "joint_angles_rad", ())) if imu else (),
-            "imu_joint_vel": tuple(float(x) for x in getattr(imu, "joint_velocities_rad_s", ())) if imu else (),
+            "imu_joint_angles": tuple(float(x) for x in getattr(imu, "joint_angles_rad", ()))
+            if imu
+            else (),
+            "imu_joint_vel": tuple(float(x) for x in getattr(imu, "joint_velocities_rad_s", ()))
+            if imu
+            else (),
             "grf_forces": tuple(float(x) for x in getattr(grf, "forces_newton", ())) if grf else (),
             "torque_raw": {k: float(v) for k, v in torque_command_raw.torques_nm.items()},
             "torque_safe": {k: float(v) for k, v in torque_command_safe.torques_nm.items()},
@@ -122,7 +126,9 @@ class CSVDiagnosticsSink(DiagnosticsSink):
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
         feature_keys = sorted(features.keys())
-        torque_keys = sorted(set(torque_command_raw.torques_nm) | set(torque_command_safe.torques_nm))
+        torque_keys = sorted(
+            set(torque_command_raw.torques_nm) | set(torque_command_safe.torques_nm)
+        )
         scheduler_keys = sorted((scheduler or {}).keys())
 
         columns: list[str] = ["timestamp"] + feature_keys

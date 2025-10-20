@@ -276,11 +276,14 @@ class _RTPlotPublisher:
         payload = _np.asarray(values, dtype=_np.float32).reshape(len(values), 1)
         self._client.send_array(payload)
 
+
 def _safe_profile_name(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name)
 
 
-def _compute_histogram(samples: Sequence[float], bins: int) -> tuple[tuple[float, ...], tuple[int, ...]]:
+def _compute_histogram(
+    samples: Sequence[float], bins: int
+) -> tuple[tuple[float, ...], tuple[int, ...]]:
     if not samples:
         return (), ()
     minimum = min(samples)
@@ -435,7 +438,9 @@ class DiagnosticsArtifacts:
         try:
             shutil.copy2(profile_path, additional_dir / profile_path.name)
         except Exception as exc:  # pragma: no cover - best effort
-            LOGGER.warning("Failed to copy profile '%s' into diagnostics dir: %s", profile_path, exc)
+            LOGGER.warning(
+                "Failed to copy profile '%s' into diagnostics dir: %s", profile_path, exc
+            )
 
         return cls(
             enabled=True,
@@ -464,7 +469,9 @@ class DiagnosticsArtifacts:
             self._loop_periods.append(now - self._last_tick_time)
         self._last_tick_time = now
 
-    def publish_realtime(self, features: Mapping[str, float], torque: TorqueCommand | None = None) -> None:
+    def publish_realtime(
+        self, features: Mapping[str, float], torque: TorqueCommand | None = None
+    ) -> None:
         """Stream live diagnostics metrics via rtplot when enabled."""
         if self.rtplot_host is None:
             return
@@ -509,7 +516,9 @@ class DiagnosticsArtifacts:
                 entries.append((name, label, unit, color))
                 seen.add(name)
 
-        torque_keys = [key for key in values if key.startswith("torque_safe_") or key.startswith("torque_raw_")]
+        torque_keys = [
+            key for key in values if key.startswith("torque_safe_") or key.startswith("torque_raw_")
+        ]
         for name in sorted(torque_keys):
             if name in seen:
                 continue
@@ -520,11 +529,7 @@ class DiagnosticsArtifacts:
             seen.add(name)
 
         for name in values:
-            if (
-                name in seen
-                or name == "timestamp"
-                or name.startswith("scheduler_")
-            ):
+            if name in seen or name == "timestamp" or name.startswith("scheduler_"):
                 continue
             unit = _resolve_signal_unit(name)
             label = _resolve_display_name(name)
@@ -590,15 +595,25 @@ class DiagnosticsArtifacts:
     ) -> list[dict[str, object]]:
         summaries: list[dict[str, object]] = []
         expected_ticks_raw = loop_stats.get("ticks")
-        expected_ticks = expected_ticks_raw if isinstance(expected_ticks_raw, int) and expected_ticks_raw > 0 else None
+        expected_ticks = (
+            expected_ticks_raw
+            if isinstance(expected_ticks_raw, int) and expected_ticks_raw > 0
+            else None
+        )
         duration_raw = loop_stats.get("duration_s")
-        duration_s = duration_raw if isinstance(duration_raw, (int, float)) and duration_raw > 0 else None
+        duration_s = (
+            duration_raw if isinstance(duration_raw, (int, float)) and duration_raw > 0 else None
+        )
         reference_rate = loop_stats.get("mean_rate_hz")
         if not isinstance(reference_rate, (int, float)) or not math.isfinite(reference_rate):
             reference_rate = None
         if reference_rate is None:
             ref_target = self.target_frequency_hz
-            if isinstance(ref_target, (int, float)) and math.isfinite(ref_target) and ref_target > 0:
+            if (
+                isinstance(ref_target, (int, float))
+                and math.isfinite(ref_target)
+                and ref_target > 0
+            ):
                 reference_rate = ref_target
         if reference_rate is not None and reference_rate <= 0:
             reference_rate = None
@@ -614,7 +629,9 @@ class DiagnosticsArtifacts:
             rates = getattr(diagnostics, "recent_sample_rates", ()) or ()
             _write_series(target / "sample_periods.csv", periods, header="seconds")
             period_edges, period_counts = sensor.sample_period_histogram(bins=10)
-            _write_histogram_counts(target / "sample_period_histogram.csv", period_edges, period_counts)
+            _write_histogram_counts(
+                target / "sample_period_histogram.csv", period_edges, period_counts
+            )
             _write_series(target / "sample_rates_hz.csv", rates, header="hz")
             rate_edges, rate_counts = sensor.sample_rate_histogram(bins=10)
             _write_histogram_counts(target / "sample_rate_histogram.csv", rate_edges, rate_counts)
@@ -624,7 +641,8 @@ class DiagnosticsArtifacts:
             events = list(
                 zip(
                     getattr(diagnostics, "recent_event_timestamps", ()) or (),
-                    getattr(diagnostics, "recent_event_fresh", ()) or (), strict=False,
+                    getattr(diagnostics, "recent_event_fresh", ()) or (),
+                    strict=False,
                 )
             )
             availability_plot_path = None
@@ -680,7 +698,9 @@ class DiagnosticsArtifacts:
                 f"fresh_ratio_window={fresh_ratio_window}",
             ]
             try:
-                (target / "summary.txt").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+                (target / "summary.txt").write_text(
+                    "\n".join(summary_lines) + "\n", encoding="utf-8"
+                )
             except Exception as exc:  # pragma: no cover - best effort
                 LOGGER.warning("Failed to write sensor summary for '%s': %s", alias, exc)
             sensor_summary = {
@@ -739,7 +759,9 @@ class DiagnosticsArtifacts:
         duration = loop_stats.get("duration_s")
         ticks = loop_stats.get("ticks")
         lines.append(
-            f"| Duration (s) | {duration:.2f} |" if isinstance(duration, (int, float)) else "| Duration (s) | N/A |"
+            f"| Duration (s) | {duration:.2f} |"
+            if isinstance(duration, (int, float))
+            else "| Duration (s) | N/A |"
         )
         if isinstance(ticks, int):
             lines.append(f"| Ticks | {ticks} |")
@@ -765,7 +787,9 @@ class DiagnosticsArtifacts:
             "- **Sensors** tables show fresh coverage, stale streaks, and data availability. "
             "CSV links capture detailed period and rate histograms."
         )
-        lines.append("- ⚠️ Alerts call out potential problems (e.g., dropouts exceeding configured tolerances).")
+        lines.append(
+            "- ⚠️ Alerts call out potential problems (e.g., dropouts exceeding configured tolerances)."
+        )
         lines.append("")
 
         lines.append("## Loop Performance")
@@ -836,7 +860,9 @@ class DiagnosticsArtifacts:
             max_period = float(max_period_obj) if isinstance(max_period_obj, (int, float)) else None
             lines.append(f"| Longest Gap (s) | {_fmt(max_period)} |")
             effective_rate_obj = summary.get("effective_rate_hz")
-            effective_rate = float(effective_rate_obj) if isinstance(effective_rate_obj, (int, float)) else None
+            effective_rate = (
+                float(effective_rate_obj) if isinstance(effective_rate_obj, (int, float)) else None
+            )
             lines.append(f"| Delivered Fresh Rate (Hz) | {_fmt(effective_rate)} |")
             lines.append("")
 
@@ -882,14 +908,20 @@ class DiagnosticsArtifacts:
             config = summary.get("config")
             if config is not None:
                 max_stale_time = getattr(config, "max_stale_time_s", None)
-                if max_stale_time is not None and isinstance(max_period, (int, float)) and max_period > max_stale_time:
+                if (
+                    max_stale_time is not None
+                    and isinstance(max_period, (int, float))
+                    and max_period > max_stale_time
+                ):
                     alerts.append(
                         f"⚠️ `{signal_name}` ({sensor_label}) observed gap {max_period:.2f}s exceeding configured "
                         f"max_stale_time_s={max_stale_time:.2f}s."
                     )
             stale_current = summary.get("stale_samples")
             if isinstance(stale_current, int) and stale_current > 0:
-                alerts.append(f"⚠️ `{signal_name}` ({sensor_label}) reported {stale_current} stale samples.")
+                alerts.append(
+                    f"⚠️ `{signal_name}` ({sensor_label}) reported {stale_current} stale samples."
+                )
 
         lines.append("## Alerts")
         lines.append("")
@@ -969,7 +1001,14 @@ class DiagnosticsArtifacts:
             _append_entry(column)
 
         feature_columns = {col for col, _, _, _, _ in entries if not col.startswith("torque_safe_")}
-        for column in sorted(c for c in df.columns if c not in feature_columns and not c.startswith("torque_") and not c.startswith("scheduler_") and c not in {"timestamp"}):
+        for column in sorted(
+            c
+            for c in df.columns
+            if c not in feature_columns
+            and not c.startswith("torque_")
+            and not c.startswith("scheduler_")
+            and c not in {"timestamp"}
+        ):
             _append_entry(column)
 
         if not entries:
@@ -1081,9 +1120,15 @@ class DiagnosticsArtifacts:
 
         path = target_dir / "data_availability.png"
         fig, ax = plt.subplots(figsize=(6, 2.0))
-        span_end = run_duration if isinstance(run_duration, (int, float)) and run_duration > 0 else None
+        span_end = (
+            run_duration if isinstance(run_duration, (int, float)) and run_duration > 0 else None
+        )
         if span_end is None:
-            tail_extension = expected_period_s if isinstance(expected_period_s, (int, float)) and expected_period_s > 0 else 0.1
+            tail_extension = (
+                expected_period_s
+                if isinstance(expected_period_s, (int, float)) and expected_period_s > 0
+                else 0.1
+            )
             span_end = rel_times[-1] + tail_extension
         span_end = max(span_end, rel_times[-1] if rel_times else 0.1, 0.1)
         for time_value, is_fresh in zip(rel_times, freshness, strict=False):

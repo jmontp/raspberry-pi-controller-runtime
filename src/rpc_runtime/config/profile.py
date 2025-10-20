@@ -32,6 +32,7 @@ RuntimeProfile = ProfileModel
 # Data models
 # ---------------------------------------------------------------------------
 
+
 def _canonicalize_side_name(name: str) -> str:
     """Map *_right/*_left aliases to canonical ipsi/contra names."""
     if not isinstance(name, str):
@@ -192,9 +193,7 @@ def _load_structured_profile(
 
     sensor_bindings: list[SensorBinding] = []
     for alias in used_sensor_aliases:
-        payload = _require_mapping(
-            hardware_sensors.get(alias), f"hardware['sensors']['{alias}']"
-        )
+        payload = _require_mapping(hardware_sensors.get(alias), f"hardware['sensors']['{alias}']")
         driver = payload.get("class") or payload.get("driver")
         if driver is None:
             raise ValueError(f"Sensor '{alias}' missing 'class' entry")

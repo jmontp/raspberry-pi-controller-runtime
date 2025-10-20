@@ -141,7 +141,6 @@ class DataWrangler:
         )
         self._schema.validate_signals(available_for_validation)
 
-
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

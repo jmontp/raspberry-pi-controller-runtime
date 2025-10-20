@@ -96,7 +96,9 @@ def test_replay_grf_respects_mass_and_loop(tmp_path):
         loop=True,
         dt=0.01,
         body_mass_kg=70.0,
-        config_override=BaseVerticalGRFConfig(channel_names=("vertical_grf_ipsi_N", "vertical_grf_contra_N")),
+        config_override=BaseVerticalGRFConfig(
+            channel_names=("vertical_grf_ipsi_N", "vertical_grf_contra_N")
+        ),
     )
     grf.probe()
     grf.start()

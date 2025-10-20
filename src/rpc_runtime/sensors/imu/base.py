@@ -106,6 +106,11 @@ CANONICAL_SEGMENT_VELOCITIES: Dict[str, str] = {
     "foot_sagittal_velocity_contra_rad_s": "foot_l",
 }
 
+CANONICAL_FEATURE_TO_SEGMENT: Dict[str, str] = {
+    **CANONICAL_SEGMENT_ANGLES,
+    **CANONICAL_SEGMENT_VELOCITIES,
+}
+
 
 def _segment_difference(lhs: str, rhs: str) -> Callable[[Mapping[str, float]], float]:
     def _compute(measured: Mapping[str, float], a: str = lhs, b: str = rhs) -> float:
@@ -199,7 +204,9 @@ class BaseIMU(BaseSensor):
         ),
         "knee_flexion_angle_contra_rad": (
             ("thigh_sagittal_angle_contra_rad", "shank_sagittal_angle_contra_rad"),
-            _segment_difference("thigh_sagittal_angle_contra_rad", "shank_sagittal_angle_contra_rad"),
+            _segment_difference(
+                "thigh_sagittal_angle_contra_rad", "shank_sagittal_angle_contra_rad"
+            ),
         ),
         "ankle_dorsiflexion_angle_ipsi_rad": (
             ("shank_sagittal_angle_ipsi_rad", "foot_sagittal_angle_ipsi_rad"),
@@ -207,31 +214,45 @@ class BaseIMU(BaseSensor):
         ),
         "ankle_dorsiflexion_angle_contra_rad": (
             ("shank_sagittal_angle_contra_rad", "foot_sagittal_angle_contra_rad"),
-            _segment_difference("shank_sagittal_angle_contra_rad", "foot_sagittal_angle_contra_rad"),
+            _segment_difference(
+                "shank_sagittal_angle_contra_rad", "foot_sagittal_angle_contra_rad"
+            ),
         ),
         "hip_flexion_velocity_ipsi_rad_s": (
             ("trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_ipsi_rad_s"),
-            _segment_difference("trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_ipsi_rad_s"),
+            _segment_difference(
+                "trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_ipsi_rad_s"
+            ),
         ),
         "hip_flexion_velocity_contra_rad_s": (
             ("trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_contra_rad_s"),
-            _segment_difference("trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_contra_rad_s"),
+            _segment_difference(
+                "trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_contra_rad_s"
+            ),
         ),
         "knee_flexion_velocity_ipsi_rad_s": (
             ("thigh_sagittal_velocity_ipsi_rad_s", "shank_sagittal_velocity_ipsi_rad_s"),
-            _segment_difference("thigh_sagittal_velocity_ipsi_rad_s", "shank_sagittal_velocity_ipsi_rad_s"),
+            _segment_difference(
+                "thigh_sagittal_velocity_ipsi_rad_s", "shank_sagittal_velocity_ipsi_rad_s"
+            ),
         ),
         "knee_flexion_velocity_contra_rad_s": (
             ("thigh_sagittal_velocity_contra_rad_s", "shank_sagittal_velocity_contra_rad_s"),
-            _segment_difference("thigh_sagittal_velocity_contra_rad_s", "shank_sagittal_velocity_contra_rad_s"),
+            _segment_difference(
+                "thigh_sagittal_velocity_contra_rad_s", "shank_sagittal_velocity_contra_rad_s"
+            ),
         ),
         "ankle_dorsiflexion_velocity_ipsi_rad_s": (
             ("shank_sagittal_velocity_ipsi_rad_s", "foot_sagittal_velocity_ipsi_rad_s"),
-            _segment_difference("shank_sagittal_velocity_ipsi_rad_s", "foot_sagittal_velocity_ipsi_rad_s"),
+            _segment_difference(
+                "shank_sagittal_velocity_ipsi_rad_s", "foot_sagittal_velocity_ipsi_rad_s"
+            ),
         ),
         "ankle_dorsiflexion_velocity_contra_rad_s": (
             ("shank_sagittal_velocity_contra_rad_s", "foot_sagittal_velocity_contra_rad_s"),
-            _segment_difference("shank_sagittal_velocity_contra_rad_s", "foot_sagittal_velocity_contra_rad_s"),
+            _segment_difference(
+                "shank_sagittal_velocity_contra_rad_s", "foot_sagittal_velocity_contra_rad_s"
+            ),
         ),
     }
 
@@ -469,8 +490,6 @@ class BaseIMU(BaseSensor):
                 raise ValueError(
                     f"Unsupported joint names {not_defined}; allowed subset: {cls.JOINT_NAMES}"
                 )
-        else:
-            joint_names = cls.JOINT_NAMES
 
         raw_port_map = dict(config.port_map or {})
         normalized_port_map: Dict[str, str] = {}
@@ -501,6 +520,9 @@ class BaseIMU(BaseSensor):
             raise ValueError(f"Missing port mappings for segments: {missing}")
         ordered_port_map = {name: normalized_port_map[name] for name in segment_names}
 
+        if not joint_names and set(segment_names) >= set(cls.SEGMENT_NAMES):
+            joint_names = cls.JOINT_NAMES
+
         cls._validate_joint_dependencies(joint_names, segment_names)
 
         config.joint_names = joint_names
@@ -511,6 +533,7 @@ class BaseIMU(BaseSensor):
     @classmethod
     def _normalize_segment_name(cls, name: str) -> str:
         canonical = SEGMENT_NAME_ALIASES.get(name, name)
+        canonical = CANONICAL_FEATURE_TO_SEGMENT.get(canonical, canonical)
         return canonical
 
     @classmethod
@@ -538,13 +561,8 @@ class BaseIMU(BaseSensor):
             if missing:
                 missing_dependencies[joint] = missing
         if missing_dependencies:
-            details = [
-                f"{joint}: missing {deps}"
-                for joint, deps in missing_dependencies.items()
-            ]
-            raise ValueError(
-                "Joint dependencies missing segments -> " + "; ".join(details)
-            )
+            details = [f"{joint}: missing {deps}" for joint, deps in missing_dependencies.items()]
+            raise ValueError("Joint dependencies missing segments -> " + "; ".join(details))
 
     # ------------------------------------------------------------------
     # Staleness management

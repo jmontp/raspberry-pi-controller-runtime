@@ -13,7 +13,9 @@ from typing import Callable, Deque, Iterable
 LOGGER = logging.getLogger(__name__)
 
 
-def _compute_histogram(samples: Iterable[float], bins: int) -> tuple[tuple[float, ...], tuple[int, ...]]:
+def _compute_histogram(
+    samples: Iterable[float], bins: int
+) -> tuple[tuple[float, ...], tuple[int, ...]]:
     values = [float(s) for s in samples if not math.isnan(float(s))]
     if not values:
         return (), ()
@@ -122,9 +124,7 @@ class BaseSensor(abc.ABC):
 
     def read_signals(self, signals: Iterable[str]) -> tuple[object, dict[str, float]]:
         """Return the latest sample along with selected canonical signals."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not implement 'read_signals'"
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} does not implement 'read_signals'")
 
     def await_startup_sample(
         self,
@@ -262,12 +262,10 @@ class BaseSensor(abc.ABC):
             stale_time = now - self._last_timestamp
 
         exceeded_samples = (
-            self._config.max_stale_samples
-            and self._stale_samples >= self._config.max_stale_samples
+            self._config.max_stale_samples and self._stale_samples >= self._config.max_stale_samples
         )
         exceeded_time = (
-            self._config.max_stale_time_s
-            and stale_time >= self._config.max_stale_time_s
+            self._config.max_stale_time_s and stale_time >= self._config.max_stale_time_s
         )
         if exceeded_samples or exceeded_time:
             return (

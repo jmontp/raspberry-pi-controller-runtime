@@ -46,7 +46,9 @@ class OSLActuator(BaseActuator):
             RuntimeError: If the underlying `osl` module is unavailable.
         """
         if OpenSourceLeg is None:
-            raise RuntimeError("opensourceleg.osl.OpenSourceLeg import failed. Install osl before use.")
+            raise RuntimeError(
+                "opensourceleg.osl.OpenSourceLeg import failed. Install osl before use."
+            )
         if isinstance(config, Mapping):
             config = self._build_config_from_mapping(config)
         joint_names = tuple(joint.name for joint in config.joints)

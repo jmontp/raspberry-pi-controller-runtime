@@ -98,7 +98,6 @@ class Microstrain3DMGX5IMU(BaseIMU):
     JOINT_NAMES = _DEFAULT_JOINTS
     SEGMENT_NAMES = _DEFAULT_SEGMENTS
 
-
     def __init__(
         self,
         config: Microstrain3DMGX5Config | None = None,
@@ -270,9 +269,7 @@ class Microstrain3DMGX5IMU(BaseIMU):
                 joint_vels.append(vel if vel is not None else 0.0)
         return np.array(joint_angles, dtype=float), np.array(joint_vels, dtype=float)
 
-    def _segment_value(
-        self, base: str, side: str, values: np.ndarray
-    ) -> float | None:
+    def _segment_value(self, base: str, side: str, values: np.ndarray) -> float | None:
         if side:
             key = f"{base}_{side}"
         else:

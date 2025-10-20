@@ -119,7 +119,6 @@ class BaseVerticalGRF(BaseSensor):
         fresh: bool,
         fallback_factory: Callable[[float], object] | None = None,
     ) -> VerticalGRFSample:
-
         def fallback(timestamp: float) -> VerticalGRFSample:
             return VerticalGRFSample(
                 timestamp=timestamp,

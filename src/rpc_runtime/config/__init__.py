@@ -23,7 +23,7 @@ from .profile import (
 
 
 def load_components_from(
-    path: Union[str, bytes, PathLike[str], PathLike[bytes]]
+    path: Union[str, bytes, PathLike[str], PathLike[bytes]],
 ) -> RuntimeComponents:
     """Convenience wrapper mirroring legacy API name."""
     normalized = fsdecode(fspath(path))

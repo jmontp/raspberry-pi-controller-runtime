@@ -58,10 +58,7 @@ def main() -> None:
     data = pd.read_csv(args.csv)
     missing = REQUIRED_COLUMNS - set(data.columns)
     if missing:
-        raise ValueError(
-            "CSV is missing required canonical columns: "
-            + ", ".join(sorted(missing))
-        )
+        raise ValueError("CSV is missing required canonical columns: " + ", ".join(sorted(missing)))
 
     config = PIControllerConfig(
         dt=1 / 500,

@@ -56,9 +56,7 @@ class ONNXTorqueModel(TorqueModel):
         ordered = np.array([features[name] for name in self._features], dtype=np.float32)
         ordered = (ordered - self._mean) / self._scale
         result = self._session.run(self._outputs, {self._input_name: ordered.reshape(1, -1)})
-        return {
-            name: float(array[0]) for name, array in zip(self._outputs, result, strict=False)
-        }
+        return {name: float(array[0]) for name, array in zip(self._outputs, result, strict=False)}
 
     def warmup(self) -> None:
         """Run a dummy inference to prime caches before realtime execution."""
