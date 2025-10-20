@@ -21,6 +21,15 @@ following responsibilities:
    - Ensure `BaseIMUConfig.port_map` covers every segment required by the
      adapter. This mapping bridges logical segments to physical transport
      identifiers or device handles.
+   - When `segment_names` or `joint_names` are omitted from the IMU config,
+     the base class now infers them from the declared port map (falling back
+     to the adapter defaults). Supplying only the ports you intend to use is
+     sufficient.
+   - Segment and joint aliases such as `thigh_ipsi` or `knee_ipsi` are normalised
+     to the conventional right-side identifiers (`thigh_r`, `knee_r`). By default,
+     *ipsilateral* (`ipsi`) corresponds to the right limb and *contralateral*
+     (`contra`) corresponds to the left limb; document any deviations in profile
+     descriptions.
 
 Following these guidelines keeps IMU adapters aligned with the shared sensor
 contract while documenting the modality-specific expectations.

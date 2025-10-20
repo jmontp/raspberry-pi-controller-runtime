@@ -46,6 +46,36 @@ DEFAULT_SEGMENT_ANGLE_CONVENTIONS: Dict[str, str] = {
     "shank_l": "Positive rotation is counter-clockwise from the left side (dorsiflexion proxy).",
     "foot_l": "Positive rotation is counter-clockwise from the left side (toe-up).",
 }
+
+SEGMENT_NAME_ALIASES: Dict[str, str] = {
+    "thigh_ipsi": "thigh_r",
+    "thigh_right": "thigh_r",
+    "thigh_contra": "thigh_l",
+    "thigh_left": "thigh_l",
+    "shank_ipsi": "shank_r",
+    "shank_right": "shank_r",
+    "shank_contra": "shank_l",
+    "shank_left": "shank_l",
+    "foot_ipsi": "foot_r",
+    "foot_right": "foot_r",
+    "foot_contra": "foot_l",
+    "foot_left": "foot_l",
+}
+
+JOINT_NAME_ALIASES: Dict[str, str] = {
+    "hip_ipsi": "hip_r",
+    "hip_right": "hip_r",
+    "hip_contra": "hip_l",
+    "hip_left": "hip_l",
+    "knee_ipsi": "knee_r",
+    "knee_right": "knee_r",
+    "knee_contra": "knee_l",
+    "knee_left": "knee_l",
+    "ankle_ipsi": "ankle_r",
+    "ankle_right": "ankle_r",
+    "ankle_contra": "ankle_l",
+    "ankle_left": "ankle_l",
+}
 DEFAULT_PORT_MAP: Dict[str, str] = {
     "trunk": "/dev/ttyIMU_trunk",
     "thigh_r": "/dev/ttyIMU_thigh_r",
@@ -128,10 +158,10 @@ class IMUStaleDataError(RuntimeError):
 class BaseIMUConfig(BaseSensorConfig):
     """Base configuration shared across IMU implementations."""
 
-    joint_names: Tuple[str, ...] = DEFAULT_JOINT_NAMES
+    joint_names: Tuple[str, ...] = field(default_factory=tuple)
     """Ordered joint names (subset of ``BaseIMU.JOINT_NAMES``) used for outputs."""
 
-    segment_names: Tuple[str, ...] = DEFAULT_SEGMENT_NAMES
+    segment_names: Tuple[str, ...] = field(default_factory=tuple)
     """Ordered segment names (subset of ``BaseIMU.SEGMENT_NAMES``) expected from hardware."""
 
     port_map: Dict[str, str] = field(default_factory=lambda: dict(DEFAULT_PORT_MAP))
@@ -428,7 +458,9 @@ class BaseIMU(BaseSensor):
             raise TypeError("BaseIMU requires a BaseIMUConfig instance")
 
         config = cast(BaseIMUConfig, super()._validate_config(config))
-        joint_names = tuple(config.joint_names or ())
+
+        raw_joint_names = tuple(config.joint_names or ())
+        joint_names = tuple(cls._normalize_joint_name(name) for name in raw_joint_names)
         if joint_names:
             if len(set(joint_names)) != len(joint_names):
                 raise ValueError("BaseIMUConfig.joint_names contains duplicate entries")
@@ -437,10 +469,24 @@ class BaseIMU(BaseSensor):
                 raise ValueError(
                     f"Unsupported joint names {not_defined}; allowed subset: {cls.JOINT_NAMES}"
                 )
+        else:
+            joint_names = cls.JOINT_NAMES
 
-        segment_names = tuple(config.segment_names)
-        if not segment_names:
-            raise ValueError("BaseIMUConfig.segment_names must contain at least one entry")
+        raw_port_map = dict(config.port_map or {})
+        normalized_port_map: Dict[str, str] = {}
+        for key, value in raw_port_map.items():
+            canonical = cls._normalize_segment_name(str(key))
+            normalized_port_map[canonical] = str(value)
+        if not normalized_port_map:
+            raise ValueError("BaseIMUConfig.port_map must map segment names to device ports")
+
+        raw_segment_names = tuple(config.segment_names or ())
+        requested_segments = tuple(cls._normalize_segment_name(name) for name in raw_segment_names)
+        if requested_segments:
+            segment_names = requested_segments
+        else:
+            segment_names = tuple(normalized_port_map.keys()) or cls.SEGMENT_NAMES
+
         if len(set(segment_names)) != len(segment_names):
             raise ValueError("BaseIMUConfig.segment_names contains duplicate entries")
         unsupported_segments = [name for name in segment_names if name not in cls.SEGMENT_NAMES]
@@ -450,20 +496,27 @@ class BaseIMU(BaseSensor):
                 f"{unsupported_segments}; allowed subset: {cls.SEGMENT_NAMES}"
             )
 
-        port_map = dict(config.port_map or {})
-        if not port_map:
-            raise ValueError("BaseIMUConfig.port_map must map segment names to device ports")
-        missing = [name for name in segment_names if name not in port_map]
+        missing = [name for name in segment_names if name not in normalized_port_map]
         if missing:
             raise ValueError(f"Missing port mappings for segments: {missing}")
-        normalized_port_map = {name: str(port_map[name]) for name in segment_names}
+        ordered_port_map = {name: normalized_port_map[name] for name in segment_names}
 
         cls._validate_joint_dependencies(joint_names, segment_names)
 
         config.joint_names = joint_names
         config.segment_names = segment_names
-        config.port_map = normalized_port_map
+        config.port_map = ordered_port_map
         return config
+
+    @classmethod
+    def _normalize_segment_name(cls, name: str) -> str:
+        canonical = SEGMENT_NAME_ALIASES.get(name, name)
+        return canonical
+
+    @classmethod
+    def _normalize_joint_name(cls, name: str) -> str:
+        canonical = JOINT_NAME_ALIASES.get(name, name)
+        return canonical
 
     @staticmethod
     def _validate_joint_dependencies(joints: Tuple[str, ...], segments: Tuple[str, ...]) -> None:

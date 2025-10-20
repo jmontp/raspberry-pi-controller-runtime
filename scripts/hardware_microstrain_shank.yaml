@@ -15,9 +15,6 @@ hardware:
     imu_microstrain:
       class: rpc_runtime.sensors.imu.microstrain_3dm_gx5.Microstrain3DMGX5IMU
       config:
-        segment_names:
-          - shank_r
-        joint_names: []
         port_map:
           shank_r: /dev/ttyUSB0
         calibration_samples: 200

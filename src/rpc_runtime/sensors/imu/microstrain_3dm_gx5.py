@@ -55,8 +55,6 @@ def _default_port_map() -> Dict[str, str]:
 class Microstrain3DMGX5Config(BaseIMUConfig):
     """Configuration describing the HBK MicroStrain 3DM-GX5-AHRS."""
 
-    joint_names: Tuple[str, ...] = _DEFAULT_JOINTS
-    segment_names: Tuple[str, ...] = _DEFAULT_SEGMENTS
     port_map: Dict[str, str] = field(default_factory=_default_port_map)
     timeout_ms: int = 0
     calibration_samples: int = 500
@@ -96,6 +94,10 @@ class _MicrostrainNode:
 
 class Microstrain3DMGX5IMU(BaseIMU):
     """Adapter for HBK MicroStrain 3DM-GX5-AHRS using MSCL."""
+
+    JOINT_NAMES = _DEFAULT_JOINTS
+    SEGMENT_NAMES = _DEFAULT_SEGMENTS
+
 
     def __init__(
         self,
