@@ -428,16 +428,15 @@ class BaseIMU(BaseSensor):
             raise TypeError("BaseIMU requires a BaseIMUConfig instance")
 
         config = cast(BaseIMUConfig, super()._validate_config(config))
-        joint_names = tuple(config.joint_names)
-        if not joint_names:
-            raise ValueError("BaseIMUConfig.joint_names must contain at least one entry")
-        if len(set(joint_names)) != len(joint_names):
-            raise ValueError("BaseIMUConfig.joint_names contains duplicate entries")
-        not_defined = [name for name in joint_names if name not in cls.JOINT_NAMES]
-        if not_defined:
-            raise ValueError(
-                f"Unsupported joint names {not_defined}; allowed subset: {cls.JOINT_NAMES}"
-            )
+        joint_names = tuple(config.joint_names or ())
+        if joint_names:
+            if len(set(joint_names)) != len(joint_names):
+                raise ValueError("BaseIMUConfig.joint_names contains duplicate entries")
+            not_defined = [name for name in joint_names if name not in cls.JOINT_NAMES]
+            if not_defined:
+                raise ValueError(
+                    f"Unsupported joint names {not_defined}; allowed subset: {cls.JOINT_NAMES}"
+                )
 
         segment_names = tuple(config.segment_names)
         if not segment_names:

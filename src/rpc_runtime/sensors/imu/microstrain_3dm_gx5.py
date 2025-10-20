@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
-from dataclasses import dataclass, field
-from typing import Dict, Tuple
+from dataclasses import dataclass, field, replace
+from typing import Any, Dict, Tuple
 
 import numpy as np
 
 from .base import LOGGER, BaseIMU, BaseIMUConfig, IMUSample
+
+if "/usr/share/python3-mscl/" not in sys.path:
+    sys.path.append("/usr/share/python3-mscl/")
 
 try:  # pragma: no cover - hardware dependency
     import mscl
@@ -71,7 +75,7 @@ class _MicrostrainNode:
         self._timeout = timeout_ms
 
     def read(self) -> dict[str, float] | None:
-        packets = self._node.getDataPackets(self._timeout, maxPackets=1)
+        packets = self._node.getDataPackets(self._timeout)
         if not packets:
             return None
         latest = packets[-1]
@@ -93,9 +97,20 @@ class _MicrostrainNode:
 class Microstrain3DMGX5IMU(BaseIMU):
     """Adapter for HBK MicroStrain 3DM-GX5-AHRS using MSCL."""
 
-    def __init__(self, config: Microstrain3DMGX5Config | None = None) -> None:
+    def __init__(
+        self,
+        config: Microstrain3DMGX5Config | None = None,
+        **config_overrides: Any,
+    ) -> None:
         """Initialise the MicroStrain adaptor and cache calibration metadata."""
-        cfg = config or Microstrain3DMGX5Config()
+        if config is None:
+            cfg = (
+                Microstrain3DMGX5Config(**config_overrides)
+                if config_overrides
+                else Microstrain3DMGX5Config()
+            )
+        else:
+            cfg = replace(config, **config_overrides) if config_overrides else config
         super().__init__(cfg)
         self._timeout_ms = cfg.timeout_ms
         self._calibration_samples = cfg.calibration_samples

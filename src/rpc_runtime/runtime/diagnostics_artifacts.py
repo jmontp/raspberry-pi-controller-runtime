@@ -250,15 +250,16 @@ class _RTPlotPublisher:
             ylabel = "" if unit_key == "unitless" else unit_key
             title = "Unitless" if unit_key == "unitless" else unit_key
             widths = [1] * len(items)
-            layout.append(
-                {
-                    "names": [label for _, label, _ in items],
-                    "colors": [color for _, _, color in items],
-                    "line_width": widths,
-                    "ylabel": ylabel,
-                    "title": title,
-                }
-            )
+            plot_desc = {
+                "names": [label for _, label, _ in items],
+                "colors": [color for _, _, color in items],
+                "line_width": widths,
+                "ylabel": ylabel,
+                "title": title,
+            }
+            if unit_key == "rad" and any("angle" in column for column, _, _ in items):
+                plot_desc["yrange"] = [-math.pi / 2, math.pi / 2]
+            layout.append(plot_desc)
             ordered_columns.extend(column for column, _, _ in items)
 
         if not ordered_columns:

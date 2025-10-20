@@ -1,0 +1,48 @@
+profile:
+  name: microstrain_shank_angle_runtime
+  controller: pi_microstrain_shank
+
+input_signals:
+  - name: shank_sagittal_angle_ipsi_rad
+    hardware: imu_microstrain
+
+output_signals:
+  - name: knee_flexion_moment_ipsi_Nm
+    hardware: actuator_mock
+
+hardware:
+  sensors:
+    imu_microstrain:
+      class: rpc_runtime.sensors.imu.microstrain_3dm_gx5.Microstrain3DMGX5IMU
+      config:
+        segment_names:
+          - shank_r
+        joint_names: []
+        port_map:
+          shank_r: /dev/ttyUSB0
+        calibration_samples: 200
+        calibration_interval_s: 0.002
+        max_stale_samples: 50
+        fault_strategy: warn
+  actuators:
+    actuator_mock:
+      class: rpc_runtime.actuators.mock.MockActuator
+      config:
+
+controllers:
+  pi_microstrain_shank:
+    implementation: rpc_runtime.controllers.pi_controller.PIController
+    joints:
+      - knee_flexion_moment_ipsi_Nm
+    description: "Mock controller that streams shank angle from MicroStrain IMU to diagnostics."
+    config:
+      dt: 0.01
+      torque_scale: 1.0
+      torque_limit_nm: 10.0
+    torque_model:
+      implementation: rpc_runtime.controllers.torque_models.mock.MockTorqueModel
+      config:
+        outputs:
+          knee_flexion_moment_ipsi_Nm: 0.0
+        inputs:
+          - shank_sagittal_angle_ipsi_rad
