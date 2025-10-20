@@ -25,12 +25,17 @@ def main() -> None:
         joints=("knee", "ankle"),
     )
     torque_model = ONNXTorqueModel(bundle)
-    imu = Microstrain3DMGX5IMU(
-        Microstrain3DMGX5Config(
-            joint_names=("knee", "ankle"),
-            segment_names=("thigh", "shank", "foot"),
-        )
-    )
+    port_map = {
+        "trunk_sagittal_angle_rad": "/dev/ttyIMU_trunk",
+        "trunk_sagittal_velocity_rad_s": "/dev/ttyIMU_trunk",
+        "thigh_sagittal_angle_ipsi_rad": "/dev/ttyIMU_thigh",
+        "thigh_sagittal_velocity_ipsi_rad_s": "/dev/ttyIMU_thigh",
+        "shank_sagittal_angle_ipsi_rad": "/dev/ttyIMU_shank",
+        "shank_sagittal_velocity_ipsi_rad_s": "/dev/ttyIMU_shank",
+        "foot_sagittal_angle_ipsi_rad": "/dev/ttyIMU_foot",
+        "foot_sagittal_velocity_ipsi_rad_s": "/dev/ttyIMU_foot",
+    }
+    imu = Microstrain3DMGX5IMU(Microstrain3DMGX5Config(port_map=port_map))
     fsr = BluetoothFSR(BluetoothFSRConfig(address="E8:EA:71:E8:37:D1"))
     actuator = OSLActuator(
         OSLLegConfig(

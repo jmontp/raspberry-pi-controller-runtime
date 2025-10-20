@@ -391,8 +391,8 @@ classDiagram
 
 Sensor types (e.g., `BaseIMU`) maintain two views of their data:
 
-- a **measured buffer** populated directly from hardware drivers (segment angles,
-  raw force channels, etc.);
+- a **measured buffer** populated directly from hardware drivers using canonical
+  feature names (e.g., `thigh_sagittal_angle_ipsi_rad`);
 - a **canonical view** that exposes the controller’s requested signals. When the
   wrangler asks for a canonical value (such as
   `knee_flexion_angle_ipsi_rad`), the sensor computes it from the measured
@@ -581,9 +581,9 @@ To switch from the serial IMU to the Bluetooth variant, change the
   same vocabulary (`hip_flexion_angle_ipsi_rad`, `vertical_grf_ipsi_N`,
   `knee_flexion_moment_ipsi_Nm`, etc.).
 - Derivation is handled inside sensor implementations (e.g., an IMU may
-  compute `knee_flexion_angle_ipsi_rad` from segment angles held in its measured
-  buffer). Configuration only maps canonical signals to hardware aliases or
-  marks them as derived.
+  compute `knee_flexion_angle_ipsi_rad` from canonical segment features held in
+  its measured buffer). Configuration only maps canonical signals to hardware
+  aliases or marks them as derived.
 - Optional inputs are marked on `input_signals` entries (e.g., `required: false`).
   Absence is handled by runtime policy rather than config-level defaults.
 

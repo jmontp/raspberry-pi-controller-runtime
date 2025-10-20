@@ -9,7 +9,7 @@ from rpc_runtime.actuators.mock import MockActuator
 from rpc_runtime.config.models import SignalRoute
 from rpc_runtime.runtime.loop import RuntimeLoop, RuntimeLoopConfig
 from rpc_runtime.runtime.wrangler import InputSchema, SchemaSignal
-from rpc_runtime.sensors.imu.base import IMUSample
+from rpc_runtime.sensors.imu.base import BaseIMUConfig, IMUSample
 from rpc_runtime.sensors.imu.mock import MockIMU
 
 
@@ -41,8 +41,6 @@ class _MockKneeAngleController:
 
 def test_mock_imu_accepts_canonical_port_names() -> None:
     """Ensure IMU configs accept canonical feature names in port maps."""
-    from rpc_runtime.sensors.imu.base import BaseIMUConfig
-
     config = BaseIMUConfig(
         port_map={
             "shank_sagittal_angle_ipsi_rad": "/dev/null",
@@ -50,29 +48,32 @@ def test_mock_imu_accepts_canonical_port_names() -> None:
         },
     )
     imu = MockIMU(config_override=config, loop=True)
-    assert "shank_r" in imu.port_map
-    assert imu.port_map["shank_r"] == "/dev/null"
+    assert "shank_sagittal_angle_ipsi_rad" in imu.port_map
+    assert imu.port_map["shank_sagittal_angle_ipsi_rad"] == "/dev/null"
 
 
 def test_runtime_loop_derives_knee_angle_from_segments() -> None:
     """Ensure the runtime derives knee flexion from thigh and shank segments."""
-    segment_angles = (
-        0.05,  # trunk
-        0.60,  # thigh_r
-        0.25,  # shank_r
-        0.10,  # foot_r
-        -0.30,  # thigh_l
-        -0.45,  # shank_l
-        -0.15,  # foot_l
-    )
-    expected_knee_angle = segment_angles[1] - segment_angles[2]
-    imu_sample = IMUSample(
-        timestamp=1.0,
-        joint_angles_rad=(0.0,) * 6,
-        joint_velocities_rad_s=(0.0,) * 6,
-        segment_angles_rad=segment_angles,
-        segment_velocities_rad_s=(0.0,) * 7,
-    )
+    thigh_angle = 0.60
+    shank_angle = 0.25
+    values = {
+        "trunk_sagittal_angle_rad": 0.05,
+        "thigh_sagittal_angle_ipsi_rad": thigh_angle,
+        "shank_sagittal_angle_ipsi_rad": shank_angle,
+        "foot_sagittal_angle_ipsi_rad": 0.10,
+        "thigh_sagittal_angle_contra_rad": -0.30,
+        "shank_sagittal_angle_contra_rad": -0.45,
+        "foot_sagittal_angle_contra_rad": -0.15,
+        "trunk_sagittal_velocity_rad_s": 0.0,
+        "thigh_sagittal_velocity_ipsi_rad_s": 0.0,
+        "shank_sagittal_velocity_ipsi_rad_s": 0.0,
+        "foot_sagittal_velocity_ipsi_rad_s": 0.0,
+        "thigh_sagittal_velocity_contra_rad_s": 0.0,
+        "shank_sagittal_velocity_contra_rad_s": 0.0,
+        "foot_sagittal_velocity_contra_rad_s": 0.0,
+    }
+    expected_knee_angle = thigh_angle - shank_angle
+    imu_sample = IMUSample(timestamp=1.0, values=values)
     imu = MockIMU(samples=[imu_sample], loop=False)
     schema = InputSchema(
         name="knee_angle_only",

@@ -65,9 +65,9 @@ def test_replay_imu_reads_filtered_sequence(tmp_path):
     imu.start()
 
     sample = imu.read()
-    assert sample.joint_angles_rad[0] == pytest.approx(0.1)
-    assert sample.joint_angles_rad[3] == pytest.approx(1.0)
-    assert sample.joint_velocities_rad_s[1] == pytest.approx(0.04)
+    assert sample.values["hip_flexion_angle_ipsi_rad"] == pytest.approx(0.1)
+    assert sample.values["hip_flexion_angle_contra_rad"] == pytest.approx(1.0)
+    assert sample.values["thigh_sagittal_angle_ipsi_rad"] == pytest.approx(0.21)
 
     with pytest.raises(RuntimeError):
         imu.read()

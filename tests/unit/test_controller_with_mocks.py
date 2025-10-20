@@ -16,34 +16,33 @@ KNEE_TORQUE = "knee_flexion_moment_ipsi_Nm"
 ANKLE_TORQUE = "ankle_dorsiflexion_moment_ipsi_Nm"
 
 
+def _canonical_sample() -> IMUSample:
+    """Construct a canonical IMU sample with consistent limb kinematics."""
+    values = {
+        "trunk_sagittal_angle_rad": 0.3,
+        "thigh_sagittal_angle_ipsi_rad": 0.2,
+        "shank_sagittal_angle_ipsi_rad": 0.1,
+        "foot_sagittal_angle_ipsi_rad": 0.05,
+        "thigh_sagittal_angle_contra_rad": -0.2,
+        "shank_sagittal_angle_contra_rad": -0.1,
+        "foot_sagittal_angle_contra_rad": -0.04,
+        "trunk_sagittal_velocity_rad_s": 0.0,
+        "thigh_sagittal_velocity_ipsi_rad_s": 0.05,
+        "shank_sagittal_velocity_ipsi_rad_s": 0.02,
+        "foot_sagittal_velocity_ipsi_rad_s": 0.01,
+        "thigh_sagittal_velocity_contra_rad_s": -0.04,
+        "shank_sagittal_velocity_contra_rad_s": -0.015,
+        "foot_sagittal_velocity_contra_rad_s": -0.005,
+    }
+    return IMUSample(timestamp=0.0, values=values)
+
+
 def test_controller_with_mock_devices() -> None:
     """Integration-style check covering controller + scheduling with mocks."""
-    imu_sample = IMUSample(
-        timestamp=0.0,
-        joint_angles_rad=(0.1, 0.05, 0.02, -0.1, -0.05, -0.02),
-        joint_velocities_rad_s=(0.2, 0.08, 0.03, -0.15, -0.06, -0.03),
-        segment_angles_rad=(
-            0.3,
-            0.2,
-            0.1,
-            0.05,
-            0.25,
-            0.15,
-            0.08,
-        ),
-        segment_velocities_rad_s=(
-            0.0,
-            0.05,
-            0.02,
-            0.01,
-            0.04,
-            0.015,
-            0.005,
-        ),
-    )
+    imu_sample = _canonical_sample()
     mock_imu = MockIMU(samples=[imu_sample], loop=True)
     assert mock_imu.port_map, "Mock IMU should expose a default port map"
-    assert set(mock_imu.segment_names).issubset(mock_imu.port_map.keys())
+    assert "thigh_sagittal_angle_ipsi_rad" in mock_imu.port_map
     mock_grf = MockVerticalGRF()
     mock_actuator = MockActuator()
     torque_model = MockTorqueModel(outputs={KNEE_TORQUE: 0.5, ANKLE_TORQUE: -0.5})
@@ -105,8 +104,7 @@ def test_mock_imu_stale_fallback() -> None:
     diag = mock.diagnostics
     assert diag.hz_estimate is not None
     fallback = mock._handle_sample(None, fresh=False)
-    assert all(value == 0.0 for value in fallback.joint_angles_rad)
-    assert all(value == 0.0 for value in fallback.segment_angles_rad)
+    assert all(value == 0.0 for value in fallback.values.values())
 
 
 def test_mock_imu_stale_raise() -> None:

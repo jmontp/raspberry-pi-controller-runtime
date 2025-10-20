@@ -6,11 +6,15 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
-import numpy as np
-
-from .base import LOGGER, BaseIMU, BaseIMUConfig, IMUSample
+from .base import (
+    LOGGER,
+    BaseIMU,
+    BaseIMUConfig,
+    CanonicalFeatureSemantics,
+    IMUSample,
+)
 
 if "/usr/share/python3-mscl/" not in sys.path:
     sys.path.append("/usr/share/python3-mscl/")
@@ -21,33 +25,23 @@ except ImportError:  # pragma: no cover - optional dependency for development
     mscl = None
 
 
-_DEFAULT_SEGMENTS: Tuple[str, ...] = (
-    "thigh_r",
-    "shank_r",
-    "foot_r",
-    "thigh_l",
-    "shank_l",
-    "foot_l",
-)
-_DEFAULT_JOINTS: Tuple[str, ...] = (
-    "knee_r",
-    "ankle_r",
-    "foot_r",
-    "knee_l",
-    "ankle_l",
-    "foot_l",
-)
-
-
 def _default_port_map() -> Dict[str, str]:
-    """Placeholder port map – override in production deployments."""
+    """Canonical feature to port defaults matching a right/left leg rig."""
     return {
-        "thigh_r": "/dev/ttyIMU_thigh_r",
-        "shank_r": "/dev/ttyIMU_shank_r",
-        "foot_r": "/dev/ttyIMU_foot_r",
-        "thigh_l": "/dev/ttyIMU_thigh_l",
-        "shank_l": "/dev/ttyIMU_shank_l",
-        "foot_l": "/dev/ttyIMU_foot_l",
+        "trunk_sagittal_angle_rad": "/dev/ttyIMU_trunk",
+        "trunk_sagittal_velocity_rad_s": "/dev/ttyIMU_trunk",
+        "thigh_sagittal_angle_ipsi_rad": "/dev/ttyIMU_thigh_r",
+        "thigh_sagittal_velocity_ipsi_rad_s": "/dev/ttyIMU_thigh_r",
+        "shank_sagittal_angle_ipsi_rad": "/dev/ttyIMU_shank_r",
+        "shank_sagittal_velocity_ipsi_rad_s": "/dev/ttyIMU_shank_r",
+        "foot_sagittal_angle_ipsi_rad": "/dev/ttyIMU_foot_r",
+        "foot_sagittal_velocity_ipsi_rad_s": "/dev/ttyIMU_foot_r",
+        "thigh_sagittal_angle_contra_rad": "/dev/ttyIMU_thigh_l",
+        "thigh_sagittal_velocity_contra_rad_s": "/dev/ttyIMU_thigh_l",
+        "shank_sagittal_angle_contra_rad": "/dev/ttyIMU_shank_l",
+        "shank_sagittal_velocity_contra_rad_s": "/dev/ttyIMU_shank_l",
+        "foot_sagittal_angle_contra_rad": "/dev/ttyIMU_foot_l",
+        "foot_sagittal_velocity_contra_rad_s": "/dev/ttyIMU_foot_l",
     }
 
 
@@ -92,11 +86,16 @@ class _MicrostrainNode:
             pass
 
 
+@dataclass(slots=True)
+class _SegmentEntry:
+    port: str
+    sign: float
+    angle_feature: str | None = None
+    velocity_feature: str | None = None
+
+
 class Microstrain3DMGX5IMU(BaseIMU):
     """Adapter for HBK MicroStrain 3DM-GX5-AHRS using MSCL."""
-
-    JOINT_NAMES = _DEFAULT_JOINTS
-    SEGMENT_NAMES = _DEFAULT_SEGMENTS
 
     def __init__(
         self,
@@ -117,12 +116,15 @@ class Microstrain3DMGX5IMU(BaseIMU):
         self._calibration_samples = cfg.calibration_samples
         self._calibration_interval = cfg.calibration_interval_s
         self._nodes: dict[str, _MicrostrainNode] = {}
-        self._segment_indices: dict[str, int] = {}
-        segment_len = len(self.segment_names)
-        self._zero_offsets = np.zeros(2 * segment_len)
-        self._last_segments = np.zeros(2 * segment_len)
-        self._last_angles = np.zeros(segment_len)
-        self._last_velocities = np.zeros(segment_len)
+        self._segments: dict[str, _SegmentEntry] = self._build_segment_entries()
+        self._feature_to_segment: dict[str, str] = {}
+        for segment, entry in self._segments.items():
+            if entry.angle_feature:
+                self._feature_to_segment[entry.angle_feature] = segment
+            if entry.velocity_feature:
+                self._feature_to_segment[entry.velocity_feature] = segment
+        self._zero_offsets: dict[str, float] = dict.fromkeys(self.port_map, 0.0)
+        self._last_values: dict[str, float] = {}
 
     # ---------------------------------------------------------------------
     # BaseIMU interface
@@ -136,12 +138,8 @@ class Microstrain3DMGX5IMU(BaseIMU):
             )
         if self._nodes:
             return
-        self._segment_indices = {name: idx for idx, name in enumerate(self.segment_names)}
-        for segment in self.segment_names:
-            port = self.port_map.get(segment)
-            if port is None:
-                raise ValueError(f"No port mapping provided for segment '{segment}'")
-            self._nodes[segment] = _MicrostrainNode(port, self._timeout_ms)
+        for segment, entry in self._segments.items():
+            self._nodes[segment] = _MicrostrainNode(entry.port, self._timeout_ms)
         self._zero_offsets = self._calibrate()
 
     def stop(self) -> None:
@@ -154,32 +152,23 @@ class Microstrain3DMGX5IMU(BaseIMU):
         """Fetch the latest IMU sample."""
         if not self._nodes:
             raise RuntimeError("IMU not started; call start() before read().")
-        segments, fresh = self._read_segments()
-        if segments is None:
-            segments = self._last_segments
-            if segments is None or not len(segments):
+        measurement, fresh = self._read_segments()
+        if measurement is None:
+            if not self._last_values:
                 return self._handle_sample(None, fresh=False)
-        offset = segments - self._zero_offsets
-        n_segments = len(self.segment_names)
-        segment_angles = offset[:n_segments]
-        segment_velocities = offset[n_segments:]
-        joint_angles, joint_velocities = self._compute_joint_values(
-            segment_angles, segment_velocities
-        )
-        timestamp = time.monotonic()
-        sample = IMUSample(
-            timestamp=timestamp,
-            joint_angles_rad=tuple(joint_angles),
-            joint_velocities_rad_s=tuple(joint_velocities),
-            segment_angles_rad=tuple(segment_angles),
-            segment_velocities_rad_s=tuple(segment_velocities),
-        )
+            measurement = dict(self._last_values)
+        canonical = {}
+        for feature, value in measurement.items():
+            offset = self._zero_offsets.get(feature, 0.0)
+            canonical[feature] = value - offset
+        self._last_values = canonical
+        sample = IMUSample(timestamp=time.monotonic(), values=canonical)
         return self._handle_sample(sample, fresh=fresh)
 
     def reset(self) -> None:
         """Re-calibrate zero offsets for the connected IMUs."""
         if not self._nodes:
-            self._zero_offsets[:] = 0.0
+            self._zero_offsets = dict.fromkeys(self.port_map, 0.0)
             return
         self._zero_offsets = self._calibrate()
 
@@ -187,25 +176,75 @@ class Microstrain3DMGX5IMU(BaseIMU):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _calibrate(self) -> np.ndarray:
+    def _build_segment_entries(self) -> dict[str, _SegmentEntry]:
+        entries: dict[str, _SegmentEntry] = {}
+        for feature, port in self.port_map.items():
+            semantics = self.feature_semantics(feature)
+            segment = self._resolve_segment_name(semantics, feature)
+            sign = -1.0 if segment.endswith("_l") else 1.0
+            entry = entries.get(segment)
+            if entry is None:
+                entry = _SegmentEntry(port=port, sign=sign)
+                entries[segment] = entry
+            elif entry.port != port:
+                raise ValueError(
+                    f"Canonical feature '{feature}' reuses segment '{segment}' with a different port"
+                )
+            if semantics.derivative >= 1:
+                if entry.velocity_feature and entry.velocity_feature != feature:
+                    raise ValueError(
+                        f"Duplicate velocity feature mapping detected for segment '{segment}'"
+                    )
+                entry.velocity_feature = feature
+            else:
+                if entry.angle_feature and entry.angle_feature != feature:
+                    raise ValueError(
+                        f"Duplicate angle feature mapping detected for segment '{segment}'"
+                    )
+                entry.angle_feature = feature
+        return entries
+
+    @staticmethod
+    def _resolve_segment_name(semantics: CanonicalFeatureSemantics, feature: str) -> str:
+        base = semantics.basis
+        side = semantics.side
+        if base == "trunk":
+            return "trunk"
+        if base == "thigh":
+            return "thigh_r" if side in {None, "ipsi"} else "thigh_l"
+        if base == "shank":
+            return "shank_r" if side in {None, "ipsi"} else "shank_l"
+        if base == "foot":
+            return "foot_r" if side in {None, "ipsi"} else "foot_l"
+        raise ValueError(
+            f"MicroStrain driver cannot map canonical feature '{feature}' to a known segment"
+        )
+
+    def _calibrate(self) -> dict[str, float]:
         """Collect samples and compute average offsets."""
-        samples: list[np.ndarray] = []
+        aggregates: dict[str, list[float]] = {}
         for _ in range(self._calibration_samples):
             measurement, fresh = self._read_segments()
-            if measurement is not None and fresh:
-                samples.append(measurement)
+            if measurement is None or not fresh:
+                time.sleep(self._calibration_interval)
+                continue
+            for feature, value in measurement.items():
+                aggregates.setdefault(feature, []).append(value)
             time.sleep(self._calibration_interval)
-        if not samples:
-            return np.zeros_like(self._last_segments)
-        stacked = np.stack(samples, axis=0)
-        return stacked.mean(axis=0)
+        offsets: dict[str, float] = {}
+        for feature in self.port_map:
+            values = aggregates.get(feature, [])
+            if values:
+                offsets[feature] = sum(values) / len(values)
+            else:
+                offsets[feature] = 0.0
+        return offsets
 
-    def _read_segments(self) -> tuple[np.ndarray | None, bool]:
-        """Read roll/gyro data for all segments; returns radians and freshness flag."""
+    def _read_segments(self) -> tuple[dict[str, float] | None, bool]:
+        """Read roll/gyro data for all segments; returns values and freshness flag."""
+        measurements: dict[str, float] = {}
         new_sample = False
-        angles = np.array(self._last_angles, copy=True)
-        velocities = np.array(self._last_velocities, copy=True)
-        for idx, segment in enumerate(self.segment_names):
+        for segment, entry in self._segments.items():
             node = self._nodes.get(segment)
             if node is None:
                 continue
@@ -216,82 +255,12 @@ class Microstrain3DMGX5IMU(BaseIMU):
                 continue
             if not packet:
                 continue
-            roll = packet.get("roll")
-            gyro = packet.get("scaledGyroX")
-            if roll is None or gyro is None:
-                continue
-            new_sample = True
-            if segment.endswith("_l"):
-                roll = -roll
-                gyro = -gyro
-            angles[idx] = roll
-            velocities[idx] = gyro
-        if new_sample:
-            combined = np.concatenate([angles, velocities])
-            self._last_angles = angles
-            self._last_velocities = velocities
-            self._last_segments = combined
-            return combined, True
-        return None, False
-
-    def _compute_joint_values(
-        self, segment_angles: np.ndarray, segment_velocities: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        joint_angles = []
-        joint_vels = []
-        for name in self.joint_names:
-            base, side = self._split_name(name)
-            if base == "knee":
-                shank = self._segment_value("shank", side, segment_angles)
-                thigh = self._segment_value("thigh", side, segment_angles)
-                shank_vel = self._segment_value("shank", side, segment_velocities)
-                thigh_vel = self._segment_value("thigh", side, segment_velocities)
-                joint_angles.append(self._difference(shank, thigh))
-                joint_vels.append(self._difference(shank_vel, thigh_vel))
-            elif base == "ankle":
-                foot = self._segment_value("foot", side, segment_angles)
-                shank = self._segment_value("shank", side, segment_angles)
-                foot_vel = self._segment_value("foot", side, segment_velocities)
-                shank_vel = self._segment_value("shank", side, segment_velocities)
-                joint_angles.append(self._difference(foot, shank))
-                joint_vels.append(self._difference(foot_vel, shank_vel))
-            elif base == "hip":
-                thigh = self._segment_value("thigh", side, segment_angles)
-                trunk = self._segment_value("trunk", "", segment_angles)
-                thigh_vel = self._segment_value("thigh", side, segment_velocities)
-                trunk_vel = self._segment_value("trunk", "", segment_velocities)
-                joint_angles.append(self._difference(thigh, trunk))
-                joint_vels.append(self._difference(thigh_vel, trunk_vel))
-            else:
-                angle = self._segment_value(base, side, segment_angles)
-                vel = self._segment_value(base, side, segment_velocities)
-                joint_angles.append(angle if angle is not None else 0.0)
-                joint_vels.append(vel if vel is not None else 0.0)
-        return np.array(joint_angles, dtype=float), np.array(joint_vels, dtype=float)
-
-    def _segment_value(self, base: str, side: str, values: np.ndarray) -> float | None:
-        if side:
-            key = f"{base}_{side}"
-        else:
-            key = base
-        idx = self._segment_indices.get(key)
-        if idx is None:
-            return None
-        return float(values[idx])
-
-    @staticmethod
-    def _difference(value_a: float | None, value_b: float | None) -> float:
-        if value_a is None and value_b is None:
-            return 0.0
-        if value_a is None:
-            return -float(value_b) if value_b is not None else 0.0
-        if value_b is None:
-            return float(value_a)
-        return float(value_a) - float(value_b)
-
-    @staticmethod
-    def _split_name(name: str) -> Tuple[str, str]:
-        if "_" in name:
-            base, side = name.rsplit("_", 1)
-            return base, side
-        return name, ""
+            angle = packet.get("roll")
+            velocity = packet.get("scaledGyroX")
+            if angle is not None and entry.angle_feature:
+                measurements[entry.angle_feature] = entry.sign * float(angle)
+                new_sample = True
+            if velocity is not None and entry.velocity_feature:
+                measurements[entry.velocity_feature] = entry.sign * float(velocity)
+                new_sample = True
+        return (measurements, True) if new_sample else (None, False)

@@ -6,145 +6,343 @@ import abc
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, Mapping, Protocol, Tuple, cast, runtime_checkable
+from typing import Callable, Dict, Iterable, Mapping, Protocol, cast, runtime_checkable
 
 from ..base import BaseSensor, BaseSensorConfig, SensorStaleDataError
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_JOINT_NAMES: Tuple[str, ...] = (
-    "hip_r",
-    "knee_r",
-    "ankle_r",
-    "hip_l",
-    "knee_l",
-    "ankle_l",
-)
-DEFAULT_SEGMENT_NAMES: Tuple[str, ...] = (
-    "trunk",
-    "thigh_r",
-    "shank_r",
-    "foot_r",
-    "thigh_l",
-    "shank_l",
-    "foot_l",
-)
-DEFAULT_JOINT_ANGLE_CONVENTIONS: Dict[str, str] = {
-    "hip_r": "Positive flexion (thigh toward pelvis) in the sagittal plane.",
-    "knee_r": "Positive flexion (heel toward posterior thigh).",
-    "ankle_r": "Positive dorsiflexion (toes toward shin).",
-    "hip_l": "Positive flexion (thigh toward pelvis) in the sagittal plane.",
-    "knee_l": "Positive flexion (heel toward posterior thigh).",
-    "ankle_l": "Positive dorsiflexion (toes toward shin).",
-}
-DEFAULT_SEGMENT_ANGLE_CONVENTIONS: Dict[str, str] = {
-    "trunk": "Positive pitch is counter-clockwise when viewed from the right side (forward lean).",
-    "thigh_r": "Positive rotation is counter-clockwise from the right side (anterior tilt).",
-    "shank_r": "Positive rotation is counter-clockwise from the right side (dorsiflexion proxy).",
-    "foot_r": "Positive rotation is counter-clockwise from the right side (toe-up).",
-    "thigh_l": "Positive rotation is counter-clockwise from the left side (anterior tilt).",
-    "shank_l": "Positive rotation is counter-clockwise from the left side (dorsiflexion proxy).",
-    "foot_l": "Positive rotation is counter-clockwise from the left side (toe-up).",
-}
 
-SEGMENT_NAME_ALIASES: Dict[str, str] = {
-    "thigh_ipsi": "thigh_r",
-    "thigh_right": "thigh_r",
-    "thigh_contra": "thigh_l",
-    "thigh_left": "thigh_l",
-    "shank_ipsi": "shank_r",
-    "shank_right": "shank_r",
-    "shank_contra": "shank_l",
-    "shank_left": "shank_l",
-    "foot_ipsi": "foot_r",
-    "foot_right": "foot_r",
-    "foot_contra": "foot_l",
-    "foot_left": "foot_l",
-}
+@dataclass(frozen=True, slots=True)
+class CanonicalIMUFeature:
+    """Description of a canonical IMU signal used by the runtime.
 
-JOINT_NAME_ALIASES: Dict[str, str] = {
-    "hip_ipsi": "hip_r",
-    "hip_right": "hip_r",
-    "hip_contra": "hip_l",
-    "hip_left": "hip_l",
-    "knee_ipsi": "knee_r",
-    "knee_right": "knee_r",
-    "knee_contra": "knee_l",
-    "knee_left": "knee_l",
-    "ankle_ipsi": "ankle_r",
-    "ankle_right": "ankle_r",
-    "ankle_contra": "ankle_l",
-    "ankle_left": "ankle_l",
-}
-DEFAULT_PORT_MAP: Dict[str, str] = {
-    "trunk": "/dev/ttyIMU_trunk",
-    "thigh_r": "/dev/ttyIMU_thigh_r",
-    "shank_r": "/dev/ttyIMU_shank_r",
-    "foot_r": "/dev/ttyIMU_foot_r",
-    "thigh_l": "/dev/ttyIMU_thigh_l",
-    "shank_l": "/dev/ttyIMU_shank_l",
-    "foot_l": "/dev/ttyIMU_foot_l",
-}
+    Attributes:
+        name: Canonical identifier used by controllers and diagnostics.
+        provided: True when the feature must be read directly from hardware.
+        description: Human readable explanation of the feature semantics.
+        dependencies: Canonical feature names required to compute this one.
+        compute: Callable that derives the feature from other canonical values.
+    """
 
-CANONICAL_SEGMENT_ANGLES: Dict[str, str] = {
-    "trunk_sagittal_angle_rad": "trunk",
-    "thigh_sagittal_angle_ipsi_rad": "thigh_r",
-    "shank_sagittal_angle_ipsi_rad": "shank_r",
-    "foot_sagittal_angle_ipsi_rad": "foot_r",
-    "thigh_sagittal_angle_contra_rad": "thigh_l",
-    "shank_sagittal_angle_contra_rad": "shank_l",
-    "foot_sagittal_angle_contra_rad": "foot_l",
-}
-
-CANONICAL_SEGMENT_VELOCITIES: Dict[str, str] = {
-    "trunk_sagittal_velocity_rad_s": "trunk",
-    "thigh_sagittal_velocity_ipsi_rad_s": "thigh_r",
-    "shank_sagittal_velocity_ipsi_rad_s": "shank_r",
-    "foot_sagittal_velocity_ipsi_rad_s": "foot_r",
-    "thigh_sagittal_velocity_contra_rad_s": "thigh_l",
-    "shank_sagittal_velocity_contra_rad_s": "shank_l",
-    "foot_sagittal_velocity_contra_rad_s": "foot_l",
-}
-
-CANONICAL_FEATURE_TO_SEGMENT: Dict[str, str] = {
-    **CANONICAL_SEGMENT_ANGLES,
-    **CANONICAL_SEGMENT_VELOCITIES,
-}
+    name: str
+    provided: bool
+    description: str
+    dependencies: tuple[str, ...] = ()
+    compute: Callable[[Mapping[str, float]], float] | None = None
 
 
-def _segment_difference(lhs: str, rhs: str) -> Callable[[Mapping[str, float]], float]:
-    def _compute(measured: Mapping[str, float], a: str = lhs, b: str = rhs) -> float:
-        return measured[a] - measured[b]
+@dataclass(frozen=True, slots=True)
+class CanonicalFeatureSemantics:
+    """Structured interpretation of a canonical IMU feature identifier.
+
+    Attributes:
+        raw: Original canonical feature name.
+        basis: Primary segment or joint described by the feature.
+        axis: Anatomical axis encoded in the identifier when available.
+        quantity: Physical quantity (angle, velocity, acceleration).
+        motion: Motion qualifier (e.g., flexion, dorsiflexion) when present.
+        side: Side hint encoded in the identifier (ipsi/contra) when present.
+        units: Unit suffix extracted from the canonical name.
+        derivative: Order of the temporal derivative encoded by the units.
+        qualifiers: Additional tokens that help adapters refine hardware routing.
+    """
+
+    raw: str
+    basis: str
+    axis: str | None
+    quantity: str | None
+    motion: str | None
+    side: str | None
+    units: str | None
+    derivative: int
+    qualifiers: tuple[str, ...] = ()
+
+
+def split_canonical_feature_name(name: str) -> CanonicalFeatureSemantics:
+    """Decode a canonical IMU feature name into structured semantics.
+
+    Args:
+        name: Canonical feature identifier to parse.
+
+    Returns:
+        CanonicalFeatureSemantics: Structured metadata describing ``name``.
+
+    Raises:
+        ValueError: If ``name`` is empty or only whitespace.
+    """
+    if not name or not name.strip():
+        raise ValueError("Canonical feature name must be non-empty")
+
+    base = name.strip()
+    units: str | None = None
+    derivative = 0
+    if base.endswith("_rad_s"):
+        units = "rad/s"
+        derivative = 1
+        base = base[: -len("_rad_s")]
+    elif base.endswith("_rad"):
+        units = "rad"
+        base = base[: -len("_rad")]
+
+    side: str | None = None
+    for suffix, token in (("_ipsi", "ipsi"), ("_contra", "contra")):
+        if base.endswith(suffix):
+            side = token
+            base = base[: -len(suffix)]
+            break
+
+    axis: str | None = None
+    quantity: str | None = None
+    motion: str | None = None
+    qualifiers: list[str] = []
+    tokens = [token for token in base.split("_") if token]
+    if tokens:
+        basis = tokens[0]
+        for token in tokens[1:]:
+            if axis is None and token in {"sagittal", "coronal", "transverse"}:
+                axis = token
+            elif quantity is None and token in {"angle", "velocity", "acceleration"}:
+                quantity = token
+            elif motion is None and token in {"flexion", "dorsiflexion", "extension"}:
+                motion = token
+            else:
+                qualifiers.append(token)
+    else:
+        basis = name.strip()
+
+    return CanonicalFeatureSemantics(
+        raw=name.strip(),
+        basis=basis,
+        axis=axis,
+        quantity=quantity,
+        motion=motion,
+        side=side,
+        units=units,
+        derivative=derivative,
+        qualifiers=tuple(qualifiers),
+    )
+
+
+def _difference(lhs: str, rhs: str) -> Callable[[Mapping[str, float]], float]:
+    """Return a helper that computes ``values[lhs] - values[rhs]``."""
+
+    def _compute(values: Mapping[str, float], a: str = lhs, b: str = rhs) -> float:
+        return float(values[a]) - float(values[b])
 
     return _compute
 
 
+_MEASURED_FEATURES: tuple[tuple[str, str], ...] = (
+    ("trunk_sagittal_angle_rad", "Sagittal pitch of the trunk segment in radians."),
+    (
+        "thigh_sagittal_angle_ipsi_rad",
+        "Sagittal pitch of the ipsilateral thigh segment in radians.",
+    ),
+    (
+        "shank_sagittal_angle_ipsi_rad",
+        "Sagittal pitch of the ipsilateral shank segment in radians.",
+    ),
+    (
+        "foot_sagittal_angle_ipsi_rad",
+        "Sagittal pitch of the ipsilateral foot segment in radians.",
+    ),
+    (
+        "thigh_sagittal_angle_contra_rad",
+        "Sagittal pitch of the contralateral thigh segment in radians.",
+    ),
+    (
+        "shank_sagittal_angle_contra_rad",
+        "Sagittal pitch of the contralateral shank segment in radians.",
+    ),
+    (
+        "foot_sagittal_angle_contra_rad",
+        "Sagittal pitch of the contralateral foot segment in radians.",
+    ),
+    ("trunk_sagittal_velocity_rad_s", "Sagittal trunk angular velocity in rad/s."),
+    (
+        "thigh_sagittal_velocity_ipsi_rad_s",
+        "Sagittal angular velocity of the ipsilateral thigh in rad/s.",
+    ),
+    (
+        "shank_sagittal_velocity_ipsi_rad_s",
+        "Sagittal angular velocity of the ipsilateral shank in rad/s.",
+    ),
+    (
+        "foot_sagittal_velocity_ipsi_rad_s",
+        "Sagittal angular velocity of the ipsilateral foot in rad/s.",
+    ),
+    (
+        "thigh_sagittal_velocity_contra_rad_s",
+        "Sagittal angular velocity of the contralateral thigh in rad/s.",
+    ),
+    (
+        "shank_sagittal_velocity_contra_rad_s",
+        "Sagittal angular velocity of the contralateral shank in rad/s.",
+    ),
+    (
+        "foot_sagittal_velocity_contra_rad_s",
+        "Sagittal angular velocity of the contralateral foot in rad/s.",
+    ),
+)
+
+
+_DERIVED_FEATURES: tuple[
+    tuple[str, str, tuple[str, ...], Callable[[Mapping[str, float]], float]], ...
+] = (
+    (
+        "hip_flexion_angle_ipsi_rad",
+        "Ipsilateral hip flexion angle computed as trunk minus thigh (rad).",
+        ("trunk_sagittal_angle_rad", "thigh_sagittal_angle_ipsi_rad"),
+        _difference("trunk_sagittal_angle_rad", "thigh_sagittal_angle_ipsi_rad"),
+    ),
+    (
+        "hip_flexion_angle_contra_rad",
+        "Contralateral hip flexion angle computed as trunk minus thigh (rad).",
+        ("trunk_sagittal_angle_rad", "thigh_sagittal_angle_contra_rad"),
+        _difference("trunk_sagittal_angle_rad", "thigh_sagittal_angle_contra_rad"),
+    ),
+    (
+        "knee_flexion_angle_ipsi_rad",
+        "Ipsilateral knee flexion angle computed as thigh minus shank (rad).",
+        ("thigh_sagittal_angle_ipsi_rad", "shank_sagittal_angle_ipsi_rad"),
+        _difference("thigh_sagittal_angle_ipsi_rad", "shank_sagittal_angle_ipsi_rad"),
+    ),
+    (
+        "knee_flexion_angle_contra_rad",
+        "Contralateral knee flexion angle computed as thigh minus shank (rad).",
+        ("thigh_sagittal_angle_contra_rad", "shank_sagittal_angle_contra_rad"),
+        _difference("thigh_sagittal_angle_contra_rad", "shank_sagittal_angle_contra_rad"),
+    ),
+    (
+        "ankle_dorsiflexion_angle_ipsi_rad",
+        "Ipsilateral ankle dorsiflexion angle computed as shank minus foot (rad).",
+        ("shank_sagittal_angle_ipsi_rad", "foot_sagittal_angle_ipsi_rad"),
+        _difference("shank_sagittal_angle_ipsi_rad", "foot_sagittal_angle_ipsi_rad"),
+    ),
+    (
+        "ankle_dorsiflexion_angle_contra_rad",
+        "Contralateral ankle dorsiflexion angle computed as shank minus foot (rad).",
+        ("shank_sagittal_angle_contra_rad", "foot_sagittal_angle_contra_rad"),
+        _difference("shank_sagittal_angle_contra_rad", "foot_sagittal_angle_contra_rad"),
+    ),
+    (
+        "hip_flexion_velocity_ipsi_rad_s",
+        "Ipsilateral hip flexion velocity computed as trunk minus thigh (rad/s).",
+        (
+            "trunk_sagittal_velocity_rad_s",
+            "thigh_sagittal_velocity_ipsi_rad_s",
+        ),
+        _difference("trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_ipsi_rad_s"),
+    ),
+    (
+        "hip_flexion_velocity_contra_rad_s",
+        "Contralateral hip flexion velocity computed as trunk minus thigh (rad/s).",
+        (
+            "trunk_sagittal_velocity_rad_s",
+            "thigh_sagittal_velocity_contra_rad_s",
+        ),
+        _difference("trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_contra_rad_s"),
+    ),
+    (
+        "knee_flexion_velocity_ipsi_rad_s",
+        "Ipsilateral knee flexion velocity computed as thigh minus shank (rad/s).",
+        (
+            "thigh_sagittal_velocity_ipsi_rad_s",
+            "shank_sagittal_velocity_ipsi_rad_s",
+        ),
+        _difference("thigh_sagittal_velocity_ipsi_rad_s", "shank_sagittal_velocity_ipsi_rad_s"),
+    ),
+    (
+        "knee_flexion_velocity_contra_rad_s",
+        "Contralateral knee flexion velocity computed as thigh minus shank (rad/s).",
+        (
+            "thigh_sagittal_velocity_contra_rad_s",
+            "shank_sagittal_velocity_contra_rad_s",
+        ),
+        _difference(
+            "thigh_sagittal_velocity_contra_rad_s",
+            "shank_sagittal_velocity_contra_rad_s",
+        ),
+    ),
+    (
+        "ankle_dorsiflexion_velocity_ipsi_rad_s",
+        "Ipsilateral ankle dorsiflexion velocity computed as shank minus foot (rad/s).",
+        (
+            "shank_sagittal_velocity_ipsi_rad_s",
+            "foot_sagittal_velocity_ipsi_rad_s",
+        ),
+        _difference(
+            "shank_sagittal_velocity_ipsi_rad_s",
+            "foot_sagittal_velocity_ipsi_rad_s",
+        ),
+    ),
+    (
+        "ankle_dorsiflexion_velocity_contra_rad_s",
+        "Contralateral ankle dorsiflexion velocity computed as shank minus foot (rad/s).",
+        (
+            "shank_sagittal_velocity_contra_rad_s",
+            "foot_sagittal_velocity_contra_rad_s",
+        ),
+        _difference(
+            "shank_sagittal_velocity_contra_rad_s",
+            "foot_sagittal_velocity_contra_rad_s",
+        ),
+    ),
+)
+
+
+CANONICAL_FEATURE_REGISTRY: Dict[str, CanonicalIMUFeature] = {
+    name: CanonicalIMUFeature(name=name, provided=True, description=description)
+    for name, description in _MEASURED_FEATURES
+}
+for name, description, deps, func in _DERIVED_FEATURES:
+    CANONICAL_FEATURE_REGISTRY[name] = CanonicalIMUFeature(
+        name=name,
+        provided=False,
+        description=description,
+        dependencies=deps,
+        compute=func,
+    )
+
+HARDWARE_CANONICAL_FEATURES: tuple[str, ...] = tuple(
+    name for name, feature in CANONICAL_FEATURE_REGISTRY.items() if feature.provided
+)
+
+
 @dataclass(slots=True)
 class IMUSample:
-    """Single IMU reading expressed in controller joint/segment coordinates.
+    """Single IMU reading expressed purely in canonical coordinates.
 
     Args:
         timestamp: Monotonic time when the sample was captured.
-        joint_angles_rad: Joint angles in radians ordered according to
-            :pyattr:`BaseIMU.joint_names`.
-        joint_velocities_rad_s: Joint angular velocities in radians per second,
-            matching the order of ``joint_angles_rad``.
-        segment_angles_rad: Segment angles (e.g., limb segments) in radians as
-            defined by :pyattr:`BaseIMU.segment_names`.
-        segment_velocities_rad_s: Segment angular velocities in radians per
-            second aligned with ``segment_angles_rad``.
+        values: Mapping of canonical feature names to measured values.
     """
 
     timestamp: float
-    joint_angles_rad: tuple[float, ...]
-    joint_velocities_rad_s: tuple[float, ...]
-    segment_angles_rad: tuple[float, ...]
-    segment_velocities_rad_s: tuple[float, ...]
+    values: Mapping[str, float] = field(default_factory=dict)
 
-    @property
-    def joint_count(self) -> int:
-        """Number of joints reported in the sample."""
-        return len(self.joint_angles_rad)
+    def __post_init__(self) -> None:
+        """Normalise mapping keys and values for quick lookups."""
+        normalised: Dict[str, float] = {}
+        for key, value in dict(self.values).items():
+            try:
+                normalised[str(key)] = float(value)
+            except (TypeError, ValueError):
+                LOGGER.debug("Ignoring non-numeric IMU value for '%s': %s", key, value)
+        object.__setattr__(self, "values", normalised)
+
+    def as_dict(self) -> Mapping[str, float]:
+        """Expose canonical IMU values without copying."""
+        return self.values
+
+    def get(self, name: str, default: float | None = None) -> float | None:
+        """Return the canonical value for ``name`` when present."""
+        return self.values.get(name, default)
+
+    def available_features(self) -> tuple[str, ...]:
+        """List canonical features present in this sample."""
+        return tuple(self.values.keys())
 
 
 @runtime_checkable
@@ -161,117 +359,27 @@ class IMUStaleDataError(RuntimeError):
 
 @dataclass(slots=True)
 class BaseIMUConfig(BaseSensorConfig):
-    """Base configuration shared across IMU implementations."""
+    """Base configuration shared across IMU implementations.
 
-    joint_names: Tuple[str, ...] = field(default_factory=tuple)
-    """Ordered joint names (subset of ``BaseIMU.JOINT_NAMES``) used for outputs."""
+    Attributes:
+        port_map: Mapping from canonical feature names to hardware transport identifiers.
+    """
 
-    segment_names: Tuple[str, ...] = field(default_factory=tuple)
-    """Ordered segment names (subset of ``BaseIMU.SEGMENT_NAMES``) expected from hardware."""
-
-    port_map: Dict[str, str] = field(default_factory=lambda: dict(DEFAULT_PORT_MAP))
-    """Mapping of segment name to underlying transport identifier/port."""
-
-    max_stale_samples: int = 5
-    """Number of consecutive stale reads tolerated before triggering a fault."""
-
-    max_stale_time_s: float = 0.2
-    """Maximum wall-clock time (seconds) without fresh data before fault."""
-
-    fault_strategy: str = "raise"
-    """One of ``{'raise', 'fallback', 'warn'}`` describing stale handling behaviour."""
+    port_map: Dict[str, str] = field(default_factory=dict)
 
 
 class BaseIMU(BaseSensor):
-    """Abstract interface for IMU sources.
+    """Abstract interface for IMU sources in canonical controller coordinates."""
 
-    Concrete implementations translate hardware frames into the canonical
-    joint and segment representation expected by the controller.
-    """
-
-    DERIVED_SIGNALS: Dict[str, tuple[tuple[str, ...], Callable[[Mapping[str, float]], float]]] = {
-        "hip_flexion_angle_ipsi_rad": (
-            ("trunk_sagittal_angle_rad", "thigh_sagittal_angle_ipsi_rad"),
-            _segment_difference("trunk_sagittal_angle_rad", "thigh_sagittal_angle_ipsi_rad"),
-        ),
-        "hip_flexion_angle_contra_rad": (
-            ("trunk_sagittal_angle_rad", "thigh_sagittal_angle_contra_rad"),
-            _segment_difference("trunk_sagittal_angle_rad", "thigh_sagittal_angle_contra_rad"),
-        ),
-        "knee_flexion_angle_ipsi_rad": (
-            ("thigh_sagittal_angle_ipsi_rad", "shank_sagittal_angle_ipsi_rad"),
-            _segment_difference("thigh_sagittal_angle_ipsi_rad", "shank_sagittal_angle_ipsi_rad"),
-        ),
-        "knee_flexion_angle_contra_rad": (
-            ("thigh_sagittal_angle_contra_rad", "shank_sagittal_angle_contra_rad"),
-            _segment_difference(
-                "thigh_sagittal_angle_contra_rad", "shank_sagittal_angle_contra_rad"
-            ),
-        ),
-        "ankle_dorsiflexion_angle_ipsi_rad": (
-            ("shank_sagittal_angle_ipsi_rad", "foot_sagittal_angle_ipsi_rad"),
-            _segment_difference("shank_sagittal_angle_ipsi_rad", "foot_sagittal_angle_ipsi_rad"),
-        ),
-        "ankle_dorsiflexion_angle_contra_rad": (
-            ("shank_sagittal_angle_contra_rad", "foot_sagittal_angle_contra_rad"),
-            _segment_difference(
-                "shank_sagittal_angle_contra_rad", "foot_sagittal_angle_contra_rad"
-            ),
-        ),
-        "hip_flexion_velocity_ipsi_rad_s": (
-            ("trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_ipsi_rad_s"),
-            _segment_difference(
-                "trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_ipsi_rad_s"
-            ),
-        ),
-        "hip_flexion_velocity_contra_rad_s": (
-            ("trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_contra_rad_s"),
-            _segment_difference(
-                "trunk_sagittal_velocity_rad_s", "thigh_sagittal_velocity_contra_rad_s"
-            ),
-        ),
-        "knee_flexion_velocity_ipsi_rad_s": (
-            ("thigh_sagittal_velocity_ipsi_rad_s", "shank_sagittal_velocity_ipsi_rad_s"),
-            _segment_difference(
-                "thigh_sagittal_velocity_ipsi_rad_s", "shank_sagittal_velocity_ipsi_rad_s"
-            ),
-        ),
-        "knee_flexion_velocity_contra_rad_s": (
-            ("thigh_sagittal_velocity_contra_rad_s", "shank_sagittal_velocity_contra_rad_s"),
-            _segment_difference(
-                "thigh_sagittal_velocity_contra_rad_s", "shank_sagittal_velocity_contra_rad_s"
-            ),
-        ),
-        "ankle_dorsiflexion_velocity_ipsi_rad_s": (
-            ("shank_sagittal_velocity_ipsi_rad_s", "foot_sagittal_velocity_ipsi_rad_s"),
-            _segment_difference(
-                "shank_sagittal_velocity_ipsi_rad_s", "foot_sagittal_velocity_ipsi_rad_s"
-            ),
-        ),
-        "ankle_dorsiflexion_velocity_contra_rad_s": (
-            ("shank_sagittal_velocity_contra_rad_s", "foot_sagittal_velocity_contra_rad_s"),
-            _segment_difference(
-                "shank_sagittal_velocity_contra_rad_s", "foot_sagittal_velocity_contra_rad_s"
-            ),
-        ),
-    }
-
-    supports_batch: bool = False
-    #: Canonical joint names (ordered) that the IMU reports. Sub-classes should
-    #: override or expose instance-specific values when available.
-    JOINT_NAMES: tuple[str, ...] = DEFAULT_JOINT_NAMES
-    #: Canonical segment names (ordered) emitted alongside joint data.
-    SEGMENT_NAMES: tuple[str, ...] = DEFAULT_SEGMENT_NAMES
-    #: Human-readable description of the joint angle sign convention.
-    JOINT_ANGLE_CONVENTIONS: dict[str, str] = DEFAULT_JOINT_ANGLE_CONVENTIONS.copy()
-    #: Human-readable description of the segment angle sign convention.
-    SEGMENT_ANGLE_CONVENTIONS: dict[str, str] = DEFAULT_SEGMENT_ANGLE_CONVENTIONS.copy()
+    CANONICAL_FEATURES: Mapping[str, CanonicalIMUFeature] = CANONICAL_FEATURE_REGISTRY
+    HARDWARE_FEATURES: tuple[str, ...] = HARDWARE_CANONICAL_FEATURES
 
     def __init__(self, config: BaseIMUConfig | None = None) -> None:
-        """Validate IMU configuration and wire up shared sensor behaviour."""
+        """Validate IMU configuration and initialise shared behaviour."""
         cfg = config or BaseIMUConfig()
         super().__init__(cfg)
         self._imu_config: BaseIMUConfig = cast(BaseIMUConfig, super().config)
+        self._hardware_feature_order = tuple(self._imu_config.port_map.keys())
         self._latest_measured: Dict[str, float] = {}
 
     def await_startup_sample(
@@ -281,10 +389,8 @@ class BaseIMU(BaseSensor):
         timeout_s: float | None = None,
     ) -> None:
         """Wait until a fresh sample covering requested canonicals is available."""
-        requested = set(signals or ())
-        handled = set(CANONICAL_SEGMENT_ANGLES) | set(CANONICAL_SEGMENT_VELOCITIES)
-        handled |= set(self.DERIVED_SIGNALS)
-        interested = [name for name in requested if name in handled]
+        requested = tuple(signals or self._hardware_feature_order)
+        interested = [name for name in requested if name in self.CANONICAL_FEATURES]
         if not interested:
             return
         poll = max(self.config.startup_poll_interval_s, 0.0)
@@ -296,11 +402,8 @@ class BaseIMU(BaseSensor):
 
         while True:
             sample = self.read()
-            measured = self._collect_direct_signals(sample)
-            derived = self._collect_derived_signals(measured)
-            canonical = {**measured, **derived}
+            canonical = self._canonicalize_sample(sample)
             if self.last_sample_fresh and all(name in canonical for name in interested):
-                self._latest_measured = measured
                 return
             if deadline is not None and time.monotonic() >= deadline:
                 missing = [name for name in interested if name not in canonical]
@@ -326,10 +429,7 @@ class BaseIMU(BaseSensor):
     def read_signals(self, signals: Iterable[str]) -> tuple[IMUSample, dict[str, float]]:
         """Return the latest sample along with selected canonical signals."""
         sample = self.read()
-        measured = self._collect_direct_signals(sample)
-        derived = self._collect_derived_signals(measured)
-        canonical = {**measured, **derived}
-        self._latest_measured = measured
+        canonical = self._canonicalize_sample(sample)
         values: dict[str, float] = {}
         for name in signals:
             value = canonical.get(name)
@@ -337,40 +437,54 @@ class BaseIMU(BaseSensor):
                 values[name] = value
         return sample, values
 
-    def _collect_direct_signals(self, sample: IMUSample) -> Dict[str, float]:
+    def _canonicalize_sample(self, sample: IMUSample) -> Dict[str, float]:
+        """Normalise an IMU sample into the canonical feature dictionary."""
+        measured = self._extract_measured_signals(sample)
+        derived = self._collect_derived_signals(measured)
+        canonical = {**measured, **derived}
+        return canonical
+
+    def _extract_measured_signals(self, sample: IMUSample) -> Dict[str, float]:
         """Extract canonical signals available directly from the IMU sample."""
         measured: Dict[str, float] = {}
-        for canonical, segment_name in CANONICAL_SEGMENT_ANGLES.items():
-            value = self._resolve_named_segment(sample, "segment_angles_rad", segment_name)
-            if value is not None:
-                measured[canonical] = value
-
-        for canonical, segment_name in CANONICAL_SEGMENT_VELOCITIES.items():
-            value = self._resolve_named_segment(sample, "segment_velocities_rad_s", segment_name)
-            if value is not None:
-                measured[canonical] = value
-
+        for name, value in sample.values.items():
+            if name not in self.CANONICAL_FEATURES:
+                continue
+            feature = self.CANONICAL_FEATURES[name]
+            if feature.compute is not None:
+                measured[name] = float(value)
+                continue
+            measured[name] = float(value)
+        self._latest_measured = measured
         return measured
 
     def _collect_derived_signals(self, measured: Mapping[str, float]) -> Dict[str, float]:
         """Compute derived canonical signals from measured channels."""
         derived: Dict[str, float] = {}
-        for name, (dependencies, compute) in self.DERIVED_SIGNALS.items():
-            if name in measured:
+        available: Dict[str, float] = dict(measured)
+        for feature in self.CANONICAL_FEATURES.values():
+            if feature.compute is None:
                 continue
-            if not all(dep in measured for dep in dependencies):
+            if feature.name in available:
+                continue
+            if not all(dep in available for dep in feature.dependencies):
                 continue
             try:
-                value = compute(measured)
+                value = feature.compute(available)
             except Exception:  # pragma: no cover - defensive guard
-                LOGGER.warning("Failed to derive IMU signal '%s'", name, exc_info=True)
+                LOGGER.warning("Failed to derive IMU signal '%s'", feature.name, exc_info=True)
                 continue
             try:
-                derived[name] = float(value)
+                numeric = float(value)
             except (TypeError, ValueError):
                 LOGGER.warning(
-                    "Derived IMU signal '%s' produced non-numeric value '%s'", name, value
+                    "Derived IMU signal '%s' produced non-numeric value '%s'",
+                    feature.name,
+                    value,
                 )
+                continue
+            derived[feature.name] = numeric
+            available[feature.name] = numeric
         return derived
 
     def reset(self) -> None:
@@ -387,186 +501,48 @@ class BaseIMU(BaseSensor):
         return self._imu_config
 
     @property
-    def joint_names(self) -> tuple[str, ...]:
-        """Tuple of joint names in the order emitted by :meth:`read`."""
-        return self._imu_config.joint_names
-
-    @property
-    def segment_names(self) -> tuple[str, ...]:
-        """Tuple of segment names in the order emitted by :meth:`read`."""
-        return self._imu_config.segment_names
+    def hardware_features(self) -> tuple[str, ...]:
+        """Canonical features provided directly by the hardware mapping."""
+        return self._hardware_feature_order
 
     @property
     def port_map(self) -> dict[str, str]:
-        """Mapping of segment name to underlying transport identifier/port."""
+        """Mapping of canonical feature name to underlying transport identifier."""
         return self._imu_config.port_map
 
-    @property
-    def joint_angle_conventions(self) -> dict[str, str]:
-        """Mapping of joint name to the signed angle convention description."""
-        defaults = {**DEFAULT_JOINT_ANGLE_CONVENTIONS, **self.JOINT_ANGLE_CONVENTIONS}
-        fallback = "Positive flexion (thigh toward pelvis) in the sagittal plane."
-        return {name: defaults.get(name, fallback) for name in self.joint_names}
-
-    @property
-    def segment_angle_conventions(self) -> dict[str, str]:
-        """Mapping of segment name to the signed angle convention description."""
-        defaults = {**DEFAULT_SEGMENT_ANGLE_CONVENTIONS, **self.SEGMENT_ANGLE_CONVENTIONS}
-        fallback = "Positive rotation counter-clockwise in the sagittal plane."
-        return {name: defaults.get(name, fallback) for name in self.segment_names}
-
-    def _resolve_joint_attribute(
-        self,
-        sample: IMUSample,
-        attribute: str,
-        index: int,
-    ) -> float | None:
-        """Return a joint attribute (angle or velocity) when available."""
-        if index < 0:
-            return None
-        data = getattr(sample, attribute, None)
-        if data is None:
-            return None
-        try:
-            return float(data[index])
-        except (IndexError, TypeError, ValueError):
-            return None
-
-    def _resolve_named_joint(
-        self,
-        sample: IMUSample,
-        attribute: str,
-        joint_name: str,
-    ) -> float | None:
-        """Resolve a joint attribute using the configured joint ordering."""
-        try:
-            index = self.joint_names.index(joint_name)
-        except ValueError:
-            return None
-        return self._resolve_joint_attribute(sample, attribute, index)
-
-    def _resolve_named_segment(
-        self,
-        sample: IMUSample,
-        attribute: str,
-        segment_name: str,
-    ) -> float | None:
-        """Resolve a segment attribute using the configured segment ordering."""
-        try:
-            index = self.segment_names.index(segment_name)
-        except ValueError:
-            return None
-        data = getattr(sample, attribute, None)
-        if data is None:
-            return None
-        try:
-            return float(data[index])
-        except (IndexError, TypeError, ValueError):
-            return None
+    def feature_semantics(self, name: str) -> CanonicalFeatureSemantics:
+        """Return parsed semantics for a canonical feature name."""
+        return split_canonical_feature_name(name)
 
     @classmethod
     def _validate_config(cls, config: BaseSensorConfig) -> BaseSensorConfig:
-        """Validate and normalise a `BaseIMUConfig` instance.
-
-        Args:
-            config: Candidate configuration to validate and copy.
-
-        Raises:
-            ValueError: If the config omits joints, segments, or required port
-                mappings, or if duplicates are present.
-        """
+        """Validate and normalise a ``BaseIMUConfig`` instance."""
         if not isinstance(config, BaseIMUConfig):
             raise TypeError("BaseIMU requires a BaseIMUConfig instance")
 
         config = cast(BaseIMUConfig, super()._validate_config(config))
 
-        raw_joint_names = tuple(config.joint_names or ())
-        joint_names = tuple(cls._normalize_joint_name(name) for name in raw_joint_names)
-        if joint_names:
-            if len(set(joint_names)) != len(joint_names):
-                raise ValueError("BaseIMUConfig.joint_names contains duplicate entries")
-            not_defined = [name for name in joint_names if name not in cls.JOINT_NAMES]
-            if not_defined:
-                raise ValueError(
-                    f"Unsupported joint names {not_defined}; allowed subset: {cls.JOINT_NAMES}"
-                )
-
         raw_port_map = dict(config.port_map or {})
-        normalized_port_map: Dict[str, str] = {}
-        for key, value in raw_port_map.items():
-            canonical = cls._normalize_segment_name(str(key))
-            normalized_port_map[canonical] = str(value)
-        if not normalized_port_map:
-            raise ValueError("BaseIMUConfig.port_map must map segment names to device ports")
+        if not raw_port_map:
+            raise ValueError("BaseIMUConfig.port_map must map canonical features to device ports")
 
-        raw_segment_names = tuple(config.segment_names or ())
-        requested_segments = tuple(cls._normalize_segment_name(name) for name in raw_segment_names)
-        if requested_segments:
-            segment_names = requested_segments
-        else:
-            segment_names = tuple(normalized_port_map.keys()) or cls.SEGMENT_NAMES
+        ordered: Dict[str, str] = {}
+        for name, port in raw_port_map.items():
+            canonical = str(name)
+            feature = cls.CANONICAL_FEATURES.get(canonical)
+            if feature is None:
+                raise ValueError(
+                    f"Unknown canonical IMU feature '{canonical}' in port_map. "
+                    "Refer to CANONICAL_FEATURES for supported identifiers."
+                )
+            if feature.compute is not None:
+                raise ValueError(
+                    f"Feature '{canonical}' is derived and cannot be mapped to hardware."
+                )
+            ordered[canonical] = str(port)
 
-        if len(set(segment_names)) != len(segment_names):
-            raise ValueError("BaseIMUConfig.segment_names contains duplicate entries")
-        unsupported_segments = [name for name in segment_names if name not in cls.SEGMENT_NAMES]
-        if unsupported_segments:
-            raise ValueError(
-                "Unsupported segment names "
-                f"{unsupported_segments}; allowed subset: {cls.SEGMENT_NAMES}"
-            )
-
-        missing = [name for name in segment_names if name not in normalized_port_map]
-        if missing:
-            raise ValueError(f"Missing port mappings for segments: {missing}")
-        ordered_port_map = {name: normalized_port_map[name] for name in segment_names}
-
-        if not joint_names and set(segment_names) >= set(cls.SEGMENT_NAMES):
-            joint_names = cls.JOINT_NAMES
-
-        cls._validate_joint_dependencies(joint_names, segment_names)
-
-        config.joint_names = joint_names
-        config.segment_names = segment_names
-        config.port_map = ordered_port_map
+        config.port_map = ordered
         return config
-
-    @classmethod
-    def _normalize_segment_name(cls, name: str) -> str:
-        canonical = SEGMENT_NAME_ALIASES.get(name, name)
-        canonical = CANONICAL_FEATURE_TO_SEGMENT.get(canonical, canonical)
-        return canonical
-
-    @classmethod
-    def _normalize_joint_name(cls, name: str) -> str:
-        canonical = JOINT_NAME_ALIASES.get(name, name)
-        return canonical
-
-    @staticmethod
-    def _validate_joint_dependencies(joints: Tuple[str, ...], segments: Tuple[str, ...]) -> None:
-        """Ensure joints only reference available segments."""
-        required: Dict[str, Tuple[str, ...]] = {
-            "knee_r": ("thigh_r", "shank_r"),
-            "knee_l": ("thigh_l", "shank_l"),
-            "ankle_r": ("shank_r", "foot_r"),
-            "ankle_l": ("shank_l", "foot_l"),
-            "hip_r": ("trunk", "thigh_r"),
-            "hip_l": ("trunk", "thigh_l"),
-        }
-        missing_dependencies: Dict[str, Tuple[str, ...]] = {}
-        for joint in joints:
-            deps = required.get(joint)
-            if not deps:
-                continue
-            missing = tuple(dep for dep in deps if dep not in segments)
-            if missing:
-                missing_dependencies[joint] = missing
-        if missing_dependencies:
-            details = [f"{joint}: missing {deps}" for joint, deps in missing_dependencies.items()]
-            raise ValueError("Joint dependencies missing segments -> " + "; ".join(details))
-
-    # ------------------------------------------------------------------
-    # Staleness management
-    # ------------------------------------------------------------------
 
     def _handle_sample(
         self,
@@ -578,15 +554,8 @@ class BaseIMU(BaseSensor):
         """Normalise stale handling for IMU samples."""
 
         def fallback(timestamp: float) -> IMUSample:
-            joints = len(self.joint_names)
-            segments = len(self.segment_names)
-            return IMUSample(
-                timestamp=timestamp,
-                joint_angles_rad=tuple(0.0 for _ in range(joints)),
-                joint_velocities_rad_s=tuple(0.0 for _ in range(joints)),
-                segment_angles_rad=tuple(0.0 for _ in range(segments)),
-                segment_velocities_rad_s=tuple(0.0 for _ in range(segments)),
-            )
+            baseline = dict.fromkeys(self._hardware_feature_order, 0.0)
+            return IMUSample(timestamp=timestamp, values=baseline)
 
         factory: Callable[[float], object] = fallback_factory or fallback
         try:

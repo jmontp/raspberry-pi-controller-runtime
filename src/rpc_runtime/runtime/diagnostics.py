@@ -68,14 +68,10 @@ class InMemoryDiagnosticsSink(DiagnosticsSink):
 
         imu = _select_imu_sample(feature_packet)
         grf = _select_grf_sample(feature_packet)
+        imu_values = dict(getattr(imu, "values", {})) if imu is not None else {}
         row = {
             "timestamp": float(timestamp),
-            "imu_joint_angles": tuple(float(x) for x in getattr(imu, "joint_angles_rad", ()))
-            if imu
-            else (),
-            "imu_joint_vel": tuple(float(x) for x in getattr(imu, "joint_velocities_rad_s", ()))
-            if imu
-            else (),
+            "imu_signals": imu_values,
             "grf_forces": tuple(float(x) for x in getattr(grf, "forces_newton", ())) if grf else (),
             "torque_raw": {k: float(v) for k, v in torque_command_raw.torques_nm.items()},
             "torque_safe": {k: float(v) for k, v in torque_command_safe.torques_nm.items()},
@@ -204,13 +200,8 @@ def _select_imu_sample(feature_packet: ControlInputs) -> IMUSample | None:
     for candidate in feature_packet.as_dict().values():
         if isinstance(candidate, IMUSample):
             return candidate
-        if hasattr(candidate, "joint_angles_rad"):
-            try:
-                angles = candidate.joint_angles_rad  # type: ignore[attr-defined]
-            except Exception:
-                continue
-            if angles is not None:
-                return candidate  # type: ignore[return-value]
+        if hasattr(candidate, "values"):
+            return candidate  # type: ignore[return-value]
     return None
 
 

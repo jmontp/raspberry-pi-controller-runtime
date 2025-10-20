@@ -9,7 +9,7 @@ from rpc_runtime.sensors.imu.mock import MockIMU
 from rpc_runtime.sensors.imu.mock_faulty import MockFaultyIMU
 
 
-def _collect_angles(samples: Iterable[float]) -> tuple[float, ...]:
+def _collect_values(samples: Iterable[float]) -> tuple[float, ...]:
     return tuple(samples)
 
 
@@ -36,7 +36,7 @@ def test_faulty_imu_injects_frame_drop() -> None:
     produced = 0
     for _ in range(6):
         sample = imu.read()
-        if all(value == 0.0 for value in sample.joint_angles_rad):
+        if all(value == 0.0 for value in sample.values.values()):
             dropped += 1
         else:
             produced += 1
@@ -55,9 +55,9 @@ def test_faulty_imu_trigger_dropout() -> None:
     dropped = 0
     for _ in range(3):
         sample = imu.read()
-        assert all(value == 0.0 for value in sample.joint_angles_rad)
+        assert all(value == 0.0 for value in sample.values.values())
         dropped += 1
     imu.restore()
     sample = imu.read()
-    assert any(abs(value) > 0.0 for value in sample.joint_angles_rad)
+    assert any(abs(value) > 0.0 for value in sample.values.values())
     assert dropped == 3

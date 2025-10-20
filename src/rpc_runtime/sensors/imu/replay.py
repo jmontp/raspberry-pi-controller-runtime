@@ -2,51 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
 
 from .base import BaseIMU, BaseIMUConfig, IMUSample
-
-_JOINT_ANGLE_COLUMNS = {
-    "hip_r": "hip_flexion_angle_ipsi_rad",
-    "knee_r": "knee_flexion_angle_ipsi_rad",
-    "ankle_r": "ankle_dorsiflexion_angle_ipsi_rad",
-    "hip_l": "hip_flexion_angle_contra_rad",
-    "knee_l": "knee_flexion_angle_contra_rad",
-    "ankle_l": "ankle_dorsiflexion_angle_contra_rad",
-}
-
-_JOINT_VELOCITY_COLUMNS = {
-    "hip_r": "hip_flexion_velocity_ipsi_rad_s",
-    "knee_r": "knee_flexion_velocity_ipsi_rad_s",
-    "ankle_r": "ankle_dorsiflexion_velocity_ipsi_rad_s",
-    "hip_l": "hip_flexion_velocity_contra_rad_s",
-    "knee_l": "knee_flexion_velocity_contra_rad_s",
-    "ankle_l": "ankle_dorsiflexion_velocity_contra_rad_s",
-}
-
-_SEGMENT_ANGLE_COLUMNS = {
-    "trunk": "trunk_sagittal_angle_rad",
-    "thigh_r": "thigh_sagittal_angle_ipsi_rad",
-    "shank_r": "shank_sagittal_angle_ipsi_rad",
-    "foot_r": "foot_sagittal_angle_ipsi_rad",
-    "thigh_l": "thigh_sagittal_angle_contra_rad",
-    "shank_l": "shank_sagittal_angle_contra_rad",
-    "foot_l": "foot_sagittal_angle_contra_rad",
-}
-
-_SEGMENT_VELOCITY_COLUMNS = {
-    "trunk": "trunk_sagittal_velocity_rad_s",
-    "thigh_r": "thigh_sagittal_velocity_ipsi_rad_s",
-    "shank_r": "shank_sagittal_velocity_ipsi_rad_s",
-    "foot_r": "foot_sagittal_velocity_ipsi_rad_s",
-    "thigh_l": "thigh_sagittal_velocity_contra_rad_s",
-    "shank_l": "shank_sagittal_velocity_contra_rad_s",
-    "foot_l": "foot_sagittal_velocity_contra_rad_s",
-}
 
 
 def _normalise_tasks(tasks: str | Iterable[str] | None) -> tuple[str, ...]:
@@ -72,6 +34,7 @@ class ReplayIMU(BaseIMU):
     config_override: BaseIMUConfig | dict | None = None
     _frame: pd.DataFrame | None = field(init=False, default=None, repr=False)
     _timestamps: list[float] = field(init=False, default_factory=list, repr=False)
+    _feature_columns: tuple[str, ...] = field(init=False, default=(), repr=False)
     _cursor: int = field(init=False, default=0, repr=False)
 
     def __post_init__(self) -> None:
@@ -83,9 +46,16 @@ class ReplayIMU(BaseIMU):
             config = BaseIMUConfig(**override)
         else:
             config = None
+        if config is None:
+            config = BaseIMUConfig(port_map=self._default_port_map())
+        elif not config.port_map:
+            config = replace(config, port_map=self._default_port_map())
         BaseIMU.__init__(self, config)
         self._tasks = _normalise_tasks(self.tasks)
         self._path = Path(self.path).expanduser()
+
+    def _default_port_map(self) -> dict[str, str]:
+        return {name: f"replay://{name}" for name in BaseIMU.HARDWARE_FEATURES}
 
     def probe(self) -> None:
         """Ensure the dataset exists before attempting to start."""
@@ -99,14 +69,29 @@ class ReplayIMU(BaseIMU):
         frame = self._slice_frame(frame)
         if frame.empty:
             raise ValueError("ReplayIMU dataset is empty after filtering/slicing")
-        self._frame = frame.reset_index(drop=True)
-        self._timestamps = self._extract_timestamps(self._frame)
+        frame = frame.reset_index(drop=True)
+        canonical_columns = [
+            column for column in frame.columns if column in self.CANONICAL_FEATURES
+        ]
+        if not canonical_columns:
+            raise ValueError("ReplayIMU dataset does not contain canonical IMU columns")
+        required = tuple(self.config.port_map.keys())
+        missing = [name for name in required if name not in canonical_columns]
+        if missing:
+            raise ValueError(
+                "ReplayIMU dataset missing required canonical columns: "
+                + ", ".join(sorted(missing))
+            )
+        self._feature_columns = tuple(sorted(set(canonical_columns)))
+        self._frame = frame
+        self._timestamps = self._extract_timestamps(frame)
         self._cursor = 0
 
     def stop(self) -> None:
         """Reset cached dataset state."""
         self._frame = None
         self._timestamps = []
+        self._feature_columns = ()
         self._cursor = 0
 
     def read(self) -> IMUSample:
@@ -124,18 +109,11 @@ class ReplayIMU(BaseIMU):
         timestamp = self._timestamps[self._cursor]
         self._cursor += 1
 
-        joint_angles = self._extract_joint_tuple(row, _JOINT_ANGLE_COLUMNS, required=True)
-        joint_velocities = self._extract_joint_tuple(row, _JOINT_VELOCITY_COLUMNS, required=False)
-        segment_angles = self._extract_segment_tuple(row, _SEGMENT_ANGLE_COLUMNS)
-        segment_velocities = self._extract_segment_tuple(row, _SEGMENT_VELOCITY_COLUMNS)
-
-        sample = IMUSample(
-            timestamp=timestamp,
-            joint_angles_rad=joint_angles,
-            joint_velocities_rad_s=joint_velocities,
-            segment_angles_rad=segment_angles,
-            segment_velocities_rad_s=segment_velocities,
-        )
+        values = {}
+        for feature in self._feature_columns:
+            if feature in row.index:
+                values[feature] = float(row[feature])
+        sample = IMUSample(timestamp=timestamp, values=values)
         return self._handle_sample(sample, fresh=True)
 
     # ------------------------------------------------------------------
@@ -175,38 +153,3 @@ class ReplayIMU(BaseIMU):
         if self.time_column and self.time_column in frame.columns:
             return [float(value) for value in frame[self.time_column].tolist()]
         return [idx * self.dt for idx in range(len(frame))]
-
-    def _extract_joint_tuple(
-        self,
-        row,
-        column_map: dict[str, str],
-        *,
-        required: bool,
-    ) -> tuple[float, ...]:
-        values: list[float] = []
-        for joint in self.joint_names:
-            column = column_map.get(joint)
-            if column is None:
-                values.append(0.0)
-                continue
-            if column not in row.index:
-                if required:
-                    raise KeyError(f"ReplayIMU missing required column '{column}'")
-                values.append(0.0)
-                continue
-            values.append(float(row[column]))
-        return tuple(values)
-
-    def _extract_segment_tuple(
-        self,
-        row,
-        column_map: dict[str, str],
-    ) -> tuple[float, ...]:
-        values: list[float] = []
-        for segment in self.segment_names:
-            column = column_map.get(segment)
-            if column is None or column not in row.index:
-                values.append(0.0)
-            else:
-                values.append(float(row[column]))
-        return tuple(values)

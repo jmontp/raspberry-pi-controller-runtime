@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Iterable, Sequence
 
 from .base import BaseIMU, BaseIMUConfig, IMUSample
+
+
+def _default_port_map() -> dict[str, str]:
+    """Generate a mock port map covering all hardware canonical features."""
+    return {name: f"mock://{name}" for name in BaseIMU.HARDWARE_FEATURES}
 
 
 def _default_samples(
@@ -16,25 +21,13 @@ def _default_samples(
 ) -> Sequence[IMUSample]:
     """Create a small sequence of random IMU samples for fall-back usage."""
     rng = random.Random(0)
-    joints = len(config.joint_names)
-    segments = len(config.segment_names)
+    features = tuple(config.port_map.keys()) or BaseIMU.HARDWARE_FEATURES
     samples: list[IMUSample] = []
     for idx in range(10):
         timestamp = idx * 0.01
-        joint_angles = tuple(rng.uniform(-amplitude, amplitude) for _ in range(joints))
-        joint_vel = tuple(rng.uniform(-amplitude, amplitude) for _ in range(joints))
-        seg_angles = tuple(rng.uniform(-amplitude, amplitude) for _ in range(segments))
-        seg_vel = tuple(rng.uniform(-amplitude, amplitude) for _ in range(segments))
-        samples.append(
-            IMUSample(
-                timestamp=timestamp,
-                joint_angles_rad=joint_angles,
-                joint_velocities_rad_s=joint_vel,
-                segment_angles_rad=seg_angles,
-                segment_velocities_rad_s=seg_vel,
-            )
-        )
-    return samples
+        values = {name: rng.uniform(-amplitude, amplitude) for name in features}
+        samples.append(IMUSample(timestamp=timestamp, values=values))
+    return tuple(samples)
 
 
 @dataclass(slots=True)
@@ -49,7 +42,12 @@ class MockIMU(BaseIMU):
 
     def __post_init__(self) -> None:
         """Initialise the base class and materialise the sample sequence."""
-        BaseIMU.__init__(self, self.config_override)
+        cfg = self.config_override
+        if cfg is None:
+            cfg = BaseIMUConfig(port_map=_default_port_map())
+        elif not cfg.port_map:
+            cfg = replace(cfg, port_map=_default_port_map())
+        BaseIMU.__init__(self, cfg)
         if self.samples is None:
             materialized = tuple(_default_samples(self.config))
         else:
@@ -77,7 +75,7 @@ class MockIMU(BaseIMU):
         return None
 
     def read(self) -> IMUSample:
-        """Return the next mock sample, optionally cycling when `loop` is set."""
+        """Return the next mock sample, optionally cycling when ``loop`` is set."""
         if not self._samples:
             raise RuntimeError("MockIMU sample sequence is empty")
         if self._index >= len(self._samples):

@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Iterable, Iterator
 
-from .base import BaseIMU, IMUSample
+from .base import BaseIMU, BaseIMUConfig, IMUSample
 
 
 @dataclass(slots=True)
@@ -24,6 +24,10 @@ class SimulatedIMU(BaseIMU):
 
     def __init__(self, trajectory: SimIMUTrajectory | None = None, hz: float = 200.0):
         """Create a simulated IMU with an optional scripted trajectory."""
+        config = BaseIMUConfig(
+            port_map={name: f"sim://{name}" for name in BaseIMU.HARDWARE_FEATURES}
+        )
+        super().__init__(config)
         self._trajectory = trajectory
         self._hz = hz
         self._iterator: Iterator[IMUSample] | None = None
@@ -43,16 +47,20 @@ class SimulatedIMU(BaseIMU):
         """Return the next simulated IMU sample."""
         if self._iterator is None:
             t = time.monotonic() - self._start
-            angle = math.sin(2 * math.pi * t)
-            return IMUSample(
-                timestamp=t,
-                joint_angles_rad=(angle,),
-                joint_velocities_rad_s=(math.cos(2 * math.pi * t),),
-                segment_angles_rad=(angle,),
-                segment_velocities_rad_s=(math.cos(2 * math.pi * t),),
-            )
+            omega = 2.0 * math.pi * self._hz
+            angle = math.sin(omega * t)
+            velocity = omega * math.cos(omega * t)
+            values = {}
+            for feature in self.hardware_features:
+                semantics = self.feature_semantics(feature)
+                if semantics.derivative >= 1:
+                    values[feature] = velocity
+                else:
+                    values[feature] = angle
+            sample = IMUSample(timestamp=t, values=values)
+            return self._handle_sample(sample, fresh=True)
         try:
             sample = next(self._iterator)
         except StopIteration as exc:  # pragma: no cover - used in tests
             raise RuntimeError("Simulation exhausted") from exc
-        return sample
+        return self._handle_sample(sample, fresh=True)
