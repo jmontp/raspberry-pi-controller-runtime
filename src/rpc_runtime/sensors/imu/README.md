@@ -34,3 +34,31 @@ following responsibilities:
 
 Following these guidelines keeps IMU adapters aligned with the shared sensor
 contract while documenting the modality-specific expectations.
+
+## Muse Bluetooth IMU
+
+The `MuseIMU` adapter streams BLE telemetry from Muse inertial units shipped
+with the reference `muse_api` repository. It requires `bleak` and the
+`Muse_Utils`, `Muse_HW`, and `Muse_Data` modules on `PYTHONPATH`.
+
+```python
+from rpc_runtime.sensors.imu import MuseIMU, MuseIMUConfig, MuseDeviceConfig
+
+config = MuseIMUConfig(
+    port_map={
+        "trunk_sagittal_angle_rad": "trunk",
+        "trunk_sagittal_velocity_rad_s": "trunk",
+    },
+    devices={
+        "trunk": MuseDeviceConfig(name="muse_trunk", adapter="hci0"),
+    },
+)
+imu = MuseIMU(config)
+```
+
+Each entry in `port_map` declares which device supplies a canonical feature.
+Device keys must appear in `MuseIMUConfig.devices`, which specifies BLE names
+or addresses plus optional per-device stream overrides. By default the driver
+starts IMU+orientation streaming at 200 Hz and automatically calibrates zero
+offsets from the first few samples. Use `reset()` at runtime to capture a new
+neutral pose.
