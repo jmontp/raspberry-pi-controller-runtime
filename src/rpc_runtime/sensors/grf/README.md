@@ -20,3 +20,20 @@ following responsibilities:
 
 Following these guidelines keeps GRF adapters aligned with the shared sensor
 contract while documenting the modality-specific expectations.
+
+## Bluetooth FSR
+
+`BluetoothFSR` wraps the Nordic UART Service exposed by the lab-built BLE insoles.
+Provide the peripheral MAC address and optional sampling rate (25/100/200 Hz).
+The adapter speaks the same command set as the original MBLUE scripts and keeps
+the zero offset configurable via `zero()`.
+
+## Wired FSR
+
+`WiredFSR` re-implements the USB/serial ActiSense reader that streams 39-byte
+frames at 230400 baud. Configure the serial port, optional clip direction
+(`forward` or `reverse`), and whether raw counts should be inverted (the legacy
+implementation used 1/value).
+
+Both adapters expose the shared `channel_names` tuple and honour the staleness
+contract described above.
